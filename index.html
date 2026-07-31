@@ -786,6 +786,11 @@
             const app = appsData.find(a => a.id === appId);
             if (!app) return;
 
+            if (app.downloadUrl && app.downloadUrl.trim() !== "") {
+                window.open(app.downloadUrl, '_blank', 'noopener');
+                return;
+            }
+
             if (window.location.protocol === 'file:') {
                 alert("【ブラウザの安全制限】\\nPC上で直接HTMLを開いている状態（file:///）では、ダウンロードボタンは動作しません。\\nGitHub Pages（https://...）に公開されたWebサイト上では、何も設定をせずとも正常にダウンロードが可能です。");
                 return;
