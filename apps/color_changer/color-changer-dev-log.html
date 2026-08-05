@@ -895,6 +895,149 @@ config.jsonに指定するURLはUNCパスでも良いですか</div>
     </div>
   </div>
 
+  <hr class="turn-rule" />
+
+  <!-- ============ TURN 11 ============ -->
+  <div class="turn">
+    <div class="user-msg"><span class="mark">&gt;</span>【不具合】
+- フォルダではなく、ファイルを複数選択して入力したとき
+　Chromeでは"「ファイル名」に変更を保存しますか？ opentoonz.github.ioは[ファイル名]を編集できるようになります"という
+　確認ポップアップがファイルそれぞれについて開く。何度か「変更を保存」ボタンをクリックしていると
+　Failed to execute 'requestPermission' on 'FileSystemHandle': User activation is required to request permissions.
+　というエラーが表示される。
+　エラーが表示されないように、また、確認ポップアップもフォルダ選択の時と同じように1回で済むようにしてください。
+
+【修正希望】
+- フォルダを入力したとき、入力したフォルダのパスをフィールド上に表示してほしい。
+- 警告のサムネイル表示について、サムネイルをクリックすると当該画像の大きいプレビューをUI上に重畳表示する（✕ボタンで閉じる）ようにしてください。</div>
+    <div class="assistant">
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Edit<span class="tool-arg">(src/lib/fsAccess.ts)</span></div>
+        <div class="tool-result">
+          <div><span class="stem">⎿</span> ファイル個別選択時、選択直後の逐次 requestPermission() を撤去（これがユーザー操作の有効期限切れでエラーになっていた原因）</div>
+          <div>ensureWritePermission() を新設 — 書き込みが必要なファイルだけ、Promise.all で同時に権限リクエストを発行</div>
+        </div>
+      </div>
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Edit<span class="tool-arg">(src/App.tsx)</span></div>
+        <div class="tool-result">
+          <div><span class="stem">⎿</span> 「色替え処理開始」クリック時の最初の処理として、処理対象ファイル全件の権限リクエストを一括発行するよう変更</div>
+          <div>権限が得られなかったファイルがあればエラー表示して処理を中断</div>
+          <div>フォルダ選択時、フォルダ名＋検出件数をドロップフィールド下に表示（絶対パス自体はブラウザのAPI仕様上取得不可）</div>
+        </div>
+      </div>
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Write<span class="tool-arg">(src/components/Lightbox.tsx)</span></div>
+        <div class="tool-result"><span class="stem">⎿</span> クリックで拡大表示するモーダル（✕ボタン／背景クリック／Escapeキーで閉じる）</div>
+      </div>
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Edit<span class="tool-arg">(src/components/ImageThumb.tsx, src/App.tsx)</span></div>
+        <div class="tool-result"><span class="stem">⎿</span> サムネイル4箇所（参照ペア一覧・パレット矛盾警告・処理結果警告）すべてにクリックで拡大表示を接続</div>
+      </div>
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Bash<span class="tool-arg">(npx tsc -b && npm run build)</span></div>
+        <div class="tool-result"><span class="stem">⎿</span> エラーなし</div>
+      </div>
+
+      <div class="prose">
+<h4>実装内容</h4>
+<p><strong>① 複数ファイル選択時のエラー・確認ポップアップ問題</strong> — 原因は、ファイルを個別選択したとき、選択直後に各ファイルへ<code>readwrite</code>権限を<strong>逐次</strong>(1件ずつawaitして)要求していたことでした。File System Access APIの権限リクエストはユーザー操作(クリック)の直後でないと実行できず、逐次処理だとN件目あたりでその猶予が切れてエラーになります。</p>
+<p>修正として、<code>fsAccess.ts</code>でファイル選択時の権限リクエストを廃止し、実際に書き込みが必要になるタイミング(「色替え処理開始」クリック時)に、対象ファイル全件分の<code>requestPermission()</code>を<code>Promise.all</code>で<strong>同時に</strong>発行するよう変更しました。同じクリック由来のユーザー操作の中で一括発行されるため、途中でエラーになりません。</p>
+<p>なお、参照専用ファイル(TO画像。書き込まれることがない)は権限リクエスト自体が不要になったため、確認ポップアップの件数も減ります。<strong>ただし、ブラウザの仕様上、フォルダ選択(1回の確認で済む)と個別ファイル選択(ファイルごとに確認が必要)は根本的に異なる権限モデルのため、複数ファイルを個別選択した場合の確認ポップアップを完全に1回にまとめることはできません</strong>。エラーは解消しましたが、書き込み対象が複数ある場合はファイルごとの確認は残ります。ポップアップを最小限にしたい場合はフォルダ選択またはフォルダのドラッグ＆ドロップをお使いください。</p>
+<p><strong>② フォルダパスの表示</strong> — ブラウザのFile System Access APIはセキュリティ上、絶対パスをWebアプリに渡しません(取得できるのはフォルダ自体の名前まで)。そのため、フォルダ選択時にドロップフィールド下へ「フォルダ名 ／ N件のファイルを検出」という形で表示するようにしました(単一・2フォルダ両モード対応)。</p>
+<p><strong>③ サムネイルのクリックで拡大プレビュー</strong> — <code>Lightbox.tsx</code>を新規作成し、参照ペア一覧・パレット矛盾警告・処理結果警告のすべてのサムネイルをクリックすると、画面中央に大きく表示するようにしました(バウンディングボックスのハイライトも維持されます)。✕ボタン、背景クリック、Escapeキーのいずれでも閉じられます。</p>
+<p><code>tsc -b</code> / <code>npm run build</code>ともにエラーなし、開発サーバーでの初期表示・コンソールエラーなしを確認済みです。実際のフォルダ/複数ファイル選択・拡大表示の動作は、画像を伴うため、これまで同様お手元でのご確認をお願いします。</p>
+      </div>
+    </div>
+  </div>
+
+  <hr class="turn-rule" />
+
+  <!-- ============ TURN 12 ============ -->
+  <div class="turn">
+    <div class="user-msg"><span class="mark">&gt;</span>「ファイル選択で画像を指定すると、処理前に表示される確認ポップアップがファイル毎に表示されます。それを避けたければフォルダ選択で指定してください」という趣旨のメッセージを、
+入力画像がファイル選択で指定され、その枚数が多い（例えば10枚以上）場合に、「色替え処理開始」ボタン有効化のタイミングでポップアップでユーザーに提示するようにしてください。</div>
+    <div class="assistant">
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Edit<span class="tool-arg">(src/App.tsx)</span></div>
+        <div class="tool-result">
+          <div><span class="stem">⎿</span> 処理段階が ready に遷移した瞬間、「フォルダ経由でない」かつ「処理対象10件以上」を満たす場合だけ一度きり通知するuseEffectを追加</div>
+          <div>通知モーダル（OKボタン／背景クリックで閉じる）のJSXとCSSを追加</div>
+        </div>
+      </div>
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Bash<span class="tool-arg">(npx tsc -b && npm run build)</span></div>
+        <div class="tool-result"><span class="stem">⎿</span> エラーなし</div>
+      </div>
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Bash<span class="tool-arg">(モーダルと同じマークアップをページに直接注入し、算出スタイルを確認)</span></div>
+        <div class="tool-result"><span class="stem">⎿</span> position: fixed / z-index: 100 / 中央寄せ、いずれも意図通り適用されていることを確認</div>
+      </div>
+
+      <div class="prose">
+<h4>実装内容</h4>
+<p>App.tsxに以下を追加しました。</p>
+<ul>
+<li>「色替え処理開始」ボタンが有効化されるタイミング(処理段階が<code>ready</code>になった瞬間)で、以下をすべて満たす場合に一度だけ注意喚起モーダルを表示します：</li>
+</ul>
+<ul>
+<li>入力元が<strong>フォルダ経由でない</strong>(個別ファイル選択またはファイルのドラッグ＆ドロップ)</li>
+<li>処理対象ファイルが<strong>10件以上</strong></li>
+</ul>
+<p>判定には、フォルダ選択時のみセットされる<code>rootDirHandle</code>の有無を利用しています(フォルダ由来なら権限は1回のグラントで子ファイルすべてに継承されるため対象外)。</p>
+<p>モーダルは「OKボタン」または背景クリックで閉じられ、同じ読み込み結果に対しては再表示されません(別のフォルダ/ファイルを読み込み直すとフェーズが<code>loading</code>→<code>ready</code>と遷移し直すため、条件を満たせば再度表示されます)。</p>
+<p><code>tsc -b</code> / <code>npm run build</code>ともにエラーなし。モーダルのCSS(オーバーレイのposition/z-index/中央寄せ等)は実際にDOMへ注入して算出スタイルを確認済みです。実際のファイル選択→10件以上→ボタン有効化というフロー全体の動作は、これまで同様お手元でご確認をお願いします。</p>
+      </div>
+    </div>
+  </div>
+
+  <hr class="turn-rule" />
+
+  <!-- ============ TURN 13 ============ -->
+  <div class="turn">
+    <div class="user-msg"><span class="mark">&gt;</span>batファイルからの起動で問題ないことを確認しました。
+Go版のランチャーをdistフォルダにコピーして実行しても、古いバージョンのアプリが立ち上がってしまうのですが
+何か手順を間違えているのでしょうか</div>
+    <div class="assistant">
+      <div class="prose"><p>原因は、おそらく2つ考えられます。1つは、コピーした<code>dist</code>フォルダが（このセッション中に何度も再ビルドしているため）古いままだった可能性。もう1つは、ブラウザのキャッシュです。後者について、念のため両方のランチャーを修正します。</p></div>
+
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Edit<span class="tool-arg">(launcher-go/main.go)</span></div>
+        <div class="tool-result"><span class="stem">⎿</span> withCacheControl ミドルウェアを追加 — /assets/* 以下は長期キャッシュ、index.html 等はno-cacheで常に再検証</div>
+      </div>
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Edit<span class="tool-arg">(launcher/proxy.js)</span></div>
+        <div class="tool-result"><span class="stem">⎿</span> 静的配信ハンドラに同じCache-Controlロジックを追加（Node版・Go版で挙動を揃えた）</div>
+      </div>
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Bash<span class="tool-arg">(npm run build; go build; node build.js — アプリ本体・Go版・Node版ランチャーを再ビルド)</span></div>
+        <div class="tool-result"><span class="stem">⎿</span> 3つとも成功</div>
+      </div>
+      <div class="tool">
+        <div class="tool-head"><span class="bullet">⏺</span> Bash<span class="tool-arg">(curlで両ランチャーのレスポンスヘッダーを確認)</span></div>
+        <div class="tool-result">
+          <div><span class="stem">⎿</span> index.html: Cache-Control: no-cache</div>
+          <div>assets/*.js: Cache-Control: public, max-age=31536000, immutable</div>
+          <div>両ランチャーとも最新ビルドの内容が正しく配信されることをブラウザ上でも確認</div>
+        </div>
+      </div>
+
+      <div class="prose">
+<h4>1. コピーした<code>dist</code>が古かった可能性（一番ありそうです）</h4>
+<p>この会話の中で、Go版ランチャーを作ってから今に至るまで、パレット表示・プライバシー注記・権限リクエストの修正・確認モーダルなど、何度も機能追加を行い、そのたびに<code>dist</code>を作り直しています。もし最初にGo版ランチャーを試したときにコピーした<code>dist</code>フォルダをそのまま使い回している場合、その後の変更が反映されていない状態になります。</p>
+<p><strong>対処法：</strong> プロジェクトルートで<code>npm run build</code>を実行し直し、生成された<code>dist</code>フォルダの中身を、Go版ランチャーの実行ファイルと同じ場所に<strong>上書きコピー</strong>してください。</p>
+<h4>2. ブラウザのキャッシュ（見つけて直しておきました）</h4>
+<p>上記を直しても再現する場合に備えて、こちらも修正しました。Go版・Node版どちらのランチャーも、静的ファイル配信時にキャッシュ制御ヘッダーを付けていなかったため、<code>index.html</code>をブラウザが古いまま使い回してしまう可能性がありました（Viteが出力するハッシュ付きファイル名の<code>assets/*.js</code>は中身が変われば名前も変わるので問題ありませんが、<code>index.html</code>自体は同じファイル名のままです）。</p>
+<ul>
+<li><code>/assets/*</code> → <code>Cache-Control: public, max-age=31536000, immutable</code>（安全に長期キャッシュ）</li>
+<li>それ以外（<code>index.html</code>など） → <code>Cache-Control: no-cache</code>（毎回サーバーに確認しに行く）</li>
+</ul>
+<p>という設定を両ランチャーに追加し、実際にヘッダーが正しく返ることを確認済みです。これで、今後<code>dist</code>を差し替えたときに古い版がブラウザキャッシュから出てくることはなくなります。</p>
+<p>再ビルドしたランチャー実行ファイルを、最新の<code>dist</code>と一緒に配置し直してお試しください。それでも古いバージョンが表示される場合は、念のため一度ブラウザで<code>Ctrl+Shift+R</code>（スーパーリロード）を試していただき、状況を教えてください。</p>
+      </div>
+    </div>
+  </div>
+
 </div>
 </body>
 </html>
