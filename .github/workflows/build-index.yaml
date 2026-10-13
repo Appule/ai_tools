@@ -1,0 +1,43 @@
+name: Auto Build Apps Index
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/**/meta.json' # meta.json が追加・修正された時だけ実行
+  workflow_dispatch: # 管理画面から手動で実行できるようにする
+
+# リポジトリへの書き込み権限を付与
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Run build script
+      run: node scripts/build-index.js
+
+    # 変更があればGitHub ActionsのBot名義でコミット&プッシュ
+    - name: Commit and Push changes
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+
+        if ! git diff --exit-code apps/apps-index.js; then
+          git add apps/apps-index.js
+          git commit -m "chore: [skip ci] apps-index.js を自動更新"
+          git push
+        else
+          echo "変更はありませんでした。"
+        fi
