@@ -1,6 +1,6 @@
 # Open-Prompted Anime Tools (OPAT)
 
-OpenToonz コミュニティメンバーが AI を使って作成した、アニメ制作に役立つ小規模な Web アプリケーション集です。
+OpenToonz コミュニティメンバーが AI を使って開発した、アニメ制作に役立つ小規模な Web アプリケーション集です。
 A collection of small, AI-generated web applications for anime production, built by the OpenToonz community.
 
 - 公開ページ / Site: https://opentoonz.github.io/ai_tools/
