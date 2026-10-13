@@ -44,7 +44,7 @@ window.globalAppsData = [
       "仕上げ",
       "色替え",
       "色置換",
-      "二値TGA"
+      "TGA"
     ],
     "searchKeywords": [
       "color change",
