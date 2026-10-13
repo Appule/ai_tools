@@ -39,7 +39,7 @@ window.globalAppsData = [
   {
     "id": "color_changer",
     "name": "色替えツール",
-    "shortDescription": "参照画像ペアから色置換パレットを作成し、複数画像の色を一括置換します [workflow test]",
+    "shortDescription": "参照画像ペアから色置換パレットを作成し、複数画像の色を一括置換します",
     "tags": [
       "仕上げ",
       "色替え",
