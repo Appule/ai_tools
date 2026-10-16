@@ -169,45 +169,6 @@ window.globalAppsData = [
     "promptLicense": "CC BY 4.0"
   },
   {
-    "id": "lazy_brush",
-    "name": "LazyFill",
-    "shortDescription": "閉じていない線画・鉛筆画・アンチエイリアスのある線画を、大まかなマーカーから自動で塗り分けるツール。複数画像を一括処理できます。",
-    "tags": [
-      "Ink&Paint",
-      "Coloring"
-    ],
-    "searchKeywords": [
-      "塗り",
-      "彩色",
-      "LazyBrush",
-      "graph cut",
-      "グラフカット",
-      "仕上げ",
-      "fill",
-      "mask"
-    ],
-    "aiInfo": {
-      "model": "Claude Opus 5.5 (計画) / GPT-6.1 Sol",
-      "version": ""
-    },
-    "manual": "1. 画像ファイルまたはフォルダをドロップします。フォルダは直下の画像を読み込みます。<br>\n2. 画像一覧で画像を選び、パレットで色を選んで、塗りたい領域にブラシでマーカーを描きます。<br>\n3. 背景にも背景色のマーカーを置きます。画像一覧の右クリックから自動マークも使えます。<br>\n4. 「グラフカット実行」を押します。塗り残しはマーカーを追加して再実行します。必要に応じてエフォートを調整します。<br>\n5. 複数画像は画像一覧で Ctrl / Shift を使って選択し、右クリックから自動マーク・グラフカット・マーカーのクリアを一括実行します。<br>\n6. 保存欄またはファイルメニューで「結果画像」か「マスクのみ」を選び、この画像またはすべての画像を PNG / TGA 24bit / TGA 32bit で書き出します。<br>\n7. 一括書き出しは保存先フォルダを選びます。フォルダへの書き出しが使えない場合は ZIP でダウンロードします。",
-    "author": "Naruya Ninomiya",
-    "promptUrl": "",
-    "promptLicense": "",
-    "referencedOSS": [
-      {
-        "name": "OpenToonz",
-        "url": "https://github.com/opentoonz/opentoonz",
-        "license": "BSD 3-Clause License"
-      },
-      {
-        "name": "fflate",
-        "url": "https://github.com/101arrowz/fflate",
-        "license": "MIT License"
-      }
-    ]
-  },
-  {
     "id": "timesheet_entry_assist",
     "name": "タイムシート入力補助",
     "shortDescription": "手書きのタイムシートのデジタル入力をサポートするツールです。タイムシート画像に入力フィールドを重畳して、手書きの数字を透かしながら動画番号を入力することができます。",
