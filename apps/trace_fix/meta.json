@@ -6,8 +6,7 @@
     "仕上げ",
     "線修正",
     "色トレス",
-    "TGA",
-    "AI"
+    "TGA"
   ],
   "searchKeywords": [
     "trace fix",
@@ -17,8 +16,7 @@
     "boundary",
     "smooth",
     "jaggy",
-    "ink paint",
-    "onnx"
+    "ink paint"
   ],
   "aiInfo": {
     "model": "Claude Code",
