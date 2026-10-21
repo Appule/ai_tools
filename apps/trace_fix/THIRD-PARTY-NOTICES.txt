@@ -83,6 +83,24 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
+Eigen（MPL-2.0）: 本アプリの WebAssembly には、ONNX Runtime 1.19.2 が使用している Eigen（改変なし）が含まれます。
+ソースコードは次から入手できます。
+https://gitlab.com/libeigen/eigen/-/tree/e7248b26a1ed53fa030c5c459f7ea095dfd276ac
+（ONNX Runtime v1.19.2 の cmake/deps.txt で指定されている版です: https://github.com/microsoft/onnxruntime/blob/v1.19.2/cmake/deps.txt ）
+
+Eigen (MPL-2.0): The WebAssembly in this app contains Eigen, unmodified, as used by ONNX Runtime 1.19.2.
+Its source code is available at the URL above (the version pinned in cmake/deps.txt of ONNX Runtime v1.19.2).
+
+
+以下は ONNX Runtime 1.19.2 の ThirdPartyNotices.txt の原文（全文）です。ONNX Runtime の全プラットフォーム向けの告知をまとめたもので、
+本アプリの WebAssembly に含まれないもの（例: Intel MKL、DNNL、CUDA 関連など）も記載されています。
+含まれないものの条件は、本アプリには適用されません。
+
+The following is the full, unmodified ThirdPartyNotices.txt of ONNX Runtime 1.19.2. It covers ONNX Runtime on all platforms
+and also lists components that are not included in the WebAssembly of this app (for example Intel MKL, DNNL and CUDA-related code).
+Terms for components that are not included do not apply to this app.
+
+
 THIRD PARTY SOFTWARE NOTICES AND INFORMATION
 
 Do Not Translate or Localize
