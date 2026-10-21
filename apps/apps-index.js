@@ -147,6 +147,43 @@ window.globalAppsData = [
     "promptLicense": "CC BY 4.0"
   },
   {
+    "id": "img2tile",
+    "name": "画像切り出しツール",
+    "shortDescription": "TGA / PNG / JPG画像から複数の矩形領域を指定し、PNG / TGAへ可逆に切り出します。透明画素のRGBも保持し、最小サイズの形式を自動で選びます。",
+    "tags": [
+      "素材",
+      "切り出し",
+      "TGA",
+      "PNG"
+    ],
+    "searchKeywords": [
+      "crop",
+      "slice",
+      "tile",
+      "sprite",
+      "tga",
+      "png",
+      "jpg"
+    ],
+    "aiInfo": {
+      "model": "Claude Code",
+      "version": "Opus 5.5"
+    },
+    "manual": "1. TGA / PNG / JPG画像をドロップ、またはクリックして選択します。<br>2. 「領域を描画」を選び、画像上をドラッグして切り出す範囲を指定します（複数可）。<br>3. 左パネルで名前と座標を調整します。<br>4. 出力形式（既定は「元の形式」。JPGはPNGで保存）を選び「領域を書き出す」を押します。複数ファイルはZIPで保存されます。<br>5. 領域はJSONで保存・再読込できます。",
+    "author": "Naruya Ninomiya",
+    "promptLicense": "CC BY 4.0",
+    "referenceArticles": [
+      {
+        "title": "Truevision TGA File Format Specification 2.0",
+        "url": "https://github.com/DEAKSoftware/Truevision-TGA"
+      },
+      {
+        "title": "Portable Network Graphics (PNG) Specification (Third Edition)",
+        "url": "https://www.w3.org/TR/png-3/"
+      }
+    ]
+  },
+  {
     "id": "img_to_pdf",
     "name": "画像一括PDF変換",
     "shortDescription": "絵コンテなどの画像ファイルをPDFに変換します。透かし（ウォーターマーク）を付けることができます。",
