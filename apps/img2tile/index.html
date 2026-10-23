@@ -11786,7 +11786,7 @@ function requireReactDomClient_production() {
   var estimatedBytesWithinLimit = 0;
   function waitForCommitToBeReady(state, timeoutOffset) {
     state.stylesheets && 0 === state.count && insertSuspendedStylesheets(state, state.stylesheets);
-    return 0 < state.count || 0 < state.imgCount ? function(commit) {
+    return 0 < state.count || 0 < state.imgCount ? function(commit2) {
       var stylesheetTimer = setTimeout(function() {
         state.stylesheets && insertSuspendedStylesheets(state, state.stylesheets);
         if (state.unsuspend) {
@@ -11807,7 +11807,7 @@ function requireReactDomClient_production() {
         },
         (state.imgBytes > estimatedBytesWithinLimit ? 50 : 800) + timeoutOffset
       );
-      state.unsuspend = commit;
+      state.unsuspend = commit2;
       return function() {
         state.unsuspend = null;
         clearTimeout(stylesheetTimer);
@@ -12587,6 +12587,13 @@ function requireClient() {
   return client.exports;
 }
 var clientExports = requireClient();
+const defaultSegmentationOptions = {
+  background: "auto",
+  whiteTolerance: 0,
+  padding: 8,
+  minSize: 16,
+  mergeContained: true
+};
 const createRegionId = () => crypto.randomUUID();
 const normalizeCoordinate = (value) => Number.isFinite(value) ? Math.round(value) : 0;
 function clampRegion(region, image) {
@@ -12608,137 +12615,177 @@ function nextRegionName(regions, prefix = "領域") {
   while (names.has(`${prefix}_${String(index).padStart(3, "0")}`)) index += 1;
   return `${prefix}_${String(index).padStart(3, "0")}`;
 }
-const initialState = {
-  status: "empty",
-  image: null,
-  preview: null,
-  regions: [],
-  selectedRegionId: null,
-  exportOptions: { format: "original", optimization: "smallest" },
-  error: null,
-  progress: null
-};
-function appReducer(state, action) {
-  switch (action.type) {
-    case "LOAD_START":
-      return {
-        ...state,
-        status: "loading",
-        error: null,
-        progress: { value: 0, message: "読み込んでいます…" }
-      };
-    case "LOAD_SUCCESS":
-      return {
-        ...state,
-        status: "ready",
-        image: action.image,
-        preview: action.preview,
-        regions: [],
-        selectedRegionId: null,
-        error: null,
-        progress: null
-      };
-    case "LOAD_FAILURE":
-      return { ...state, status: "error", error: action.error, progress: null };
-    case "SET_PROGRESS":
-      return {
-        ...state,
-        progress: { value: action.value, message: action.message }
-      };
-    case "CLEAR_PROGRESS":
-      return { ...state, progress: null };
-    case "CLEAR_IMAGE":
-      return { ...initialState, exportOptions: state.exportOptions };
-    case "ADD_REGION":
-      return state.image ? {
-        ...state,
-        regions: [
-          ...state.regions,
-          clampRegion(action.region, state.image)
-        ],
-        selectedRegionId: action.region.id
-      } : state;
-    case "UPDATE_REGION":
-      return state.image ? {
-        ...state,
-        regions: state.regions.map(
-          (region) => region.id === action.id ? clampRegion(
-            { ...region, ...action.changes, id: region.id },
-            state.image
-          ) : region
-        )
-      } : state;
-    case "DELETE_REGION": {
-      if (!state.regions.some((region) => region.id === action.id))
-        return state;
-      const regions = state.regions.filter((region) => region.id !== action.id);
-      return {
-        ...state,
-        regions,
-        selectedRegionId: state.selectedRegionId === action.id ? null : state.selectedRegionId
-      };
-    }
-    case "SELECT_REGION":
-      return { ...state, selectedRegionId: action.id };
-    case "DUPLICATE_REGION": {
-      if (!state.regions.some((region) => region.id === action.id))
-        return state;
-      return {
-        ...state,
-        regions: [
-          ...state.regions,
-          state.image ? clampRegion(action.region, state.image) : action.region
-        ],
-        selectedRegionId: action.region.id
-      };
-    }
-    case "REORDER_REGION": {
-      const index = state.regions.findIndex(
-        (region) => region.id === action.id
+function characterSeeds(clicked, representative, clickedWhite) {
+  return [clickedWhite ? representative : clicked];
+}
+function intersectingRegions(regions, start, end) {
+  const left = Math.min(start.x, end.x), right = Math.max(start.x, end.x);
+  const top = Math.min(start.y, end.y), bottom = Math.max(start.y, end.y);
+  return regions.filter(
+    (region) => Math.max(left, region.x) < Math.min(right, region.x + region.width) && Math.max(top, region.y) < Math.min(bottom, region.y + region.height)
+  ).map((region) => region.id);
+}
+function rectangleSelection(regions, ids, anchor, start, end, additive) {
+  const hits = intersectingRegions(regions, start, end);
+  const retained = additive ? regions.filter((region) => ids.includes(region.id)).map((region) => region.id) : [];
+  const added = hits.filter((id) => !retained.includes(id));
+  const selectedRegionIds = [...retained, ...added];
+  return {
+    selectedRegionIds,
+    selectionAnchor: added.at(-1) ?? (selectedRegionIds.length === 0 && !additive ? null : anchor)
+  };
+}
+function padBounds(b, padding, image) {
+  const x = Math.max(0, b.x - padding), y = Math.max(0, b.y - padding);
+  return {
+    x,
+    y,
+    width: Math.min(image.width, b.x + b.width + padding) - x,
+    height: Math.min(image.height, b.y + b.height + padding) - y
+  };
+}
+function autoRegions(components, options, image) {
+  const kept = components.filter(
+    (c) => c.bounds.width >= options.minSize || c.bounds.height >= options.minSize
+  );
+  const excluded = components.length - kept.length;
+  let regions = kept.map((c) => ({
+    ...padBounds(c.bounds, options.padding, image),
+    seeds: [c.seed]
+  }));
+  if (options.mergeContained) {
+    regions.sort((a, b) => b.width * b.height - a.width * a.height);
+    const roots = [];
+    for (const r of regions) {
+      const parent = roots.find(
+        (p) => p.x <= r.x && p.y <= r.y && p.x + p.width >= r.x + r.width && p.y + p.height >= r.y + r.height
       );
-      const destination = index + action.direction;
-      if (index < 0 || destination < 0 || destination >= state.regions.length)
-        return state;
-      const regions = [...state.regions];
-      const [item] = regions.splice(index, 1);
-      if (!item) return state;
-      regions.splice(destination, 0, item);
-      return { ...state, regions };
+      if (parent) parent.seeds.push(...r.seeds);
+      else roots.push(r);
     }
-    case "REPLACE_REGIONS":
-      return {
-        ...state,
-        regions: state.image ? action.regions.map((region) => clampRegion(region, state.image)).filter((region) => region.width > 0 && region.height > 0) : [],
-        selectedRegionId: null
-      };
-    case "SET_EXPORT_OPTIONS":
-      return {
-        ...state,
-        exportOptions: { ...state.exportOptions, ...action.changes }
-      };
+    regions = roots;
   }
+  const count = regions.length;
+  if (count > 1e3) return { regions: [], excluded, count, tooMany: true };
+  regions.sort((a, b) => a.y - b.y || a.x - b.x);
+  const ordered = [];
+  while (regions.length) {
+    const first = regions[0];
+    const row = regions.filter((r) => r.y < first.y + first.height);
+    ordered.push(...row.sort((a, b) => a.x - b.x || a.y - b.y));
+    regions = regions.filter((r) => r.y >= first.y + first.height);
+  }
+  return { regions: ordered, excluded, count, tooMany: false };
 }
-const StateContext = reactExports.createContext(null);
-const DispatchContext = reactExports.createContext(null);
-function AppProvider({ children }) {
-  const [state, dispatch] = reactExports.useReducer(appReducer, initialState);
-  const stableState = reactExports.useMemo(() => state, [state]);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(StateContext.Provider, { value: stableState, children: /* @__PURE__ */ jsxRuntimeExports.jsx(DispatchContext.Provider, { value: dispatch, children }) });
+function unionBounds(bounds) {
+  const x = Math.min(...bounds.map((b) => b.x));
+  const y = Math.min(...bounds.map((b) => b.y));
+  return {
+    x,
+    y,
+    width: Math.max(...bounds.map((b) => b.x + b.width)) - x,
+    height: Math.max(...bounds.map((b) => b.y + b.height)) - y
+  };
 }
-function useAppState() {
-  const value = reactExports.useContext(StateContext);
-  if (!value) throw new Error("AppProviderが必要です。");
-  return value;
+function addRegionSeed(region, seed, bounds, padding, image) {
+  return {
+    ...region,
+    ...unionBounds([region, padBounds(bounds, padding, image)]),
+    seeds: [...region.seeds ?? [], seed]
+  };
 }
-function useAppDispatch() {
-  const value = reactExports.useContext(DispatchContext);
-  if (!value) throw new Error("AppProviderが必要です。");
-  return value;
+function absorbRegions(regions, targetId, ids) {
+  const target = regions.find((r) => r.id === targetId);
+  const sources = regions.filter(
+    (r) => r.id !== targetId && ids.includes(r.id)
+  );
+  if (!target || !sources.length) return regions;
+  const members = [target, ...sources];
+  const merged = {
+    ...target,
+    ...unionBounds(members),
+    seeds: members.flatMap((r) => r.seeds ?? [])
+  };
+  return regions.flatMap(
+    (r) => r === target ? [merged] : sources.includes(r) ? [] : [r]
+  );
 }
-function resolveOutputFormat(option, source) {
-  return option === "original" ? source.format === "tga" ? "tga" : "png" : option;
+function mergeRegions(regions, ids, newId) {
+  const selected = regions.filter((region) => ids.includes(region.id));
+  if (selected.length < 2) return regions;
+  const first = selected[0];
+  const x = Math.min(...selected.map((region) => region.x));
+  const y = Math.min(...selected.map((region) => region.y));
+  const merged = {
+    id: newId,
+    name: first.name,
+    ...selected.every((r) => r.seeds !== void 0) ? { seeds: selected.flatMap((r) => r.seeds) } : {},
+    x,
+    y,
+    width: Math.max(...selected.map((region) => region.x + region.width)) - x,
+    height: Math.max(...selected.map((region) => region.y + region.height)) - y
+  };
+  return regions.flatMap(
+    (region) => region === first ? [merged] : ids.includes(region.id) ? [] : [region]
+  );
 }
 const strings = {
+  explanation: "説明",
+  backgroundProcessingHelp: "キャラ以外（背景や、写り込んだ隣のキャラ）を透明か白にします。手で追加した領域には効きません。",
+  autoSegmentHelp: "白か透明の背景で区切られた絵ごとに、領域を自動で作ります。今ある領域は置き換わります。",
+  exclusion: "除外シード",
+  exclusionWhiteOnly: "除外シードは白背景の画像でだけ使えます",
+  exclusionNeedsProcessing: "除外シードの効果は、背景処理を「透明」か「白」にすると表示されます",
+  alreadyBackground: "ここはすでに背景です",
+  backgroundProcessing: "背景処理",
+  backgroundProcessingOptions: {
+    none: "なし",
+    transparent: "透明",
+    white: "白"
+  },
+  manualRegionNote: "手で描いた領域は矩形のまま出力します",
+  emptyMask: "中身が空です",
+  jsonInvalid: "領域JSONの形式または値が正しくありません。",
+  emptyRegionNotice: (names) => `${names.length}件の領域は中身が空です：${names.slice(0, 3).join("、")}${names.length > 3 ? `、ほか${names.length - 3}件` : ""}`,
+  character: "領域シード",
+  autoSegment: "自動指定",
+  segmentationSettings: "自動切り出しの設定",
+  background: "背景",
+  backgrounds: { auto: "自動", transparent: "透明", white: "白" },
+  whiteTolerance: "白の許容差",
+  padding: "Padding",
+  minSize: "最小サイズ",
+  mergeContained: "内側の小さな塊をまとめる",
+  segmenting: "キャラクターを解析しています…",
+  segmentFailed: "キャラクターの解析に失敗しました。",
+  clickCharacter: "領域シードはキャラクターの上をクリックしてください",
+  selectSeedRegion: "シードを追加する領域を1つ選択してください",
+  alreadyIncluded: "すでにこの領域に含まれています",
+  lastSeedRemoved: (name) => `最後のシードを削除したため、領域「${name}」を削除しました`,
+  absorbedRegions: (names) => names.length === 1 ? `「${names[0]}」を統合しました` : `${names.length}件の領域を統合しました`,
+  componentExists: "この塊はすでに領域があります",
+  noCharacters: "キャラクターが見つかりませんでした",
+  tooManyComponents: (n) => `塊が多すぎます（${n}件）。最小サイズを大きくしてください`,
+  replaceRegions: (n) => `既存の${n}件の領域を、自動指定の結果で置き換えますか？`,
+  replace: "置き換える",
+  backgroundResult: (kind, tolerance) => kind === "transparent" ? "背景：透明" : `背景：白（許容差${tolerance}）`,
+  segmented: (n, kind, excluded) => `${n}件の領域を作りました（背景：${kind === "transparent" ? "透明" : "白"}）` + (excluded ? `（${excluded}件の小さな塊を除外）` : ""),
+  loading: "読み込んでいます…",
+  selectedCount: (count) => `${count}件選択中`,
+  merge: "統合",
+  delete: "削除",
+  duplicate: "複製",
+  name: "名前",
+  moveUp: "上へ",
+  moveDown: "下へ",
+  emptyRegions: "まだ領域がありません",
+  drawHint: "ツールバーの「領域を追加」を選び、画像上をドラッグしてください。",
+  undo: "元に戻す",
+  redo: "やり直す",
+  undoTitle: "元に戻す (Ctrl+Z)",
+  redoTitle: "やり直す (Ctrl+Shift+Z / Ctrl+Y)",
+  editorTools: "編集ツール",
+  canvas: "画像編集キャンバス",
   licenses: "ライセンス",
   closeDialog: "閉じる",
   licenseDevelopment: "開発サーバーではライセンス一覧を生成しません。npm run buildで同梱OSSのライセンス全文を含むHTMLを生成してください。",
@@ -12786,20 +12833,579 @@ const strings = {
   noImage: "画像を読み込むと編集を始められます",
   regions: "切り出し領域",
   export: "書き出し",
-  addRegion: "領域を描画",
-  select: "選択・編集",
-  pan: "パン",
+  addRegion: "領域を追加",
+  select: "選択",
   fit: "全体表示",
   actual: "100%",
   removeImage: "画像を閉じる",
   saveJson: "JSON保存",
   loadJson: "JSON読込"
 };
+const initialState = {
+  status: "empty",
+  image: null,
+  preview: null,
+  document: { regions: [], exclusionSeeds: [] },
+  selectedRegionIds: [],
+  selectionAnchor: null,
+  past: [],
+  future: [],
+  checkpoint: null,
+  segmentationOptions: defaultSegmentationOptions,
+  exportOptions: {
+    format: "original",
+    optimization: "smallest",
+    backgroundProcessing: "none"
+  },
+  error: null,
+  progress: null
+};
+function reduceContent(state, action) {
+  switch (action.type) {
+    case "REMOVE_REGION_SEED": {
+      const regions = state.document.regions.flatMap((region) => {
+        if (region.id !== action.id || !region.seeds) return [region];
+        const index = region.seeds.findIndex(
+          (s) => s.x === action.seed.x && s.y === action.seed.y
+        );
+        if (index < 0) return [region];
+        const seeds = region.seeds.filter((_, i) => i !== index);
+        return seeds.length ? [{ ...region, seeds }] : [];
+      });
+      return {
+        ...state,
+        document: { ...state.document, regions },
+        selectedRegionIds: state.selectedRegionIds.filter(
+          (id) => regions.some((r) => r.id === id)
+        )
+      };
+    }
+    case "ADD_REGION_SEED":
+      return state.image ? {
+        ...state,
+        document: {
+          ...state.document,
+          regions: state.document.regions.map(
+            (r) => r.id === action.id ? addRegionSeed(
+              r,
+              action.seed,
+              action.bounds,
+              action.padding,
+              state.image
+            ) : r
+          )
+        }
+      } : state;
+    case "ABSORB_REGIONS": {
+      const regions = absorbRegions(
+        state.document.regions,
+        action.id,
+        action.ids
+      );
+      return regions === state.document.regions ? state : {
+        ...state,
+        document: { ...state.document, regions },
+        selectedRegionIds: [action.id],
+        selectionAnchor: action.id
+      };
+    }
+    case "SET_EXCLUSION_SEEDS":
+      return {
+        ...state,
+        document: { ...state.document, exclusionSeeds: action.seeds }
+      };
+    case "SET_SEGMENTATION_OPTIONS":
+      return {
+        ...state,
+        segmentationOptions: {
+          ...state.segmentationOptions,
+          ...action.changes
+        }
+      };
+    case "LOAD_START":
+      return {
+        ...state,
+        status: "loading",
+        selectionAnchor: null,
+        past: [],
+        future: [],
+        checkpoint: null,
+        error: null,
+        progress: { value: 0, message: strings.loading }
+      };
+    case "LOAD_SUCCESS":
+      return {
+        ...state,
+        status: "ready",
+        image: action.image,
+        segmentationOptions: {
+          ...state.segmentationOptions,
+          whiteTolerance: action.image.source.format === "jpeg" ? 16 : 0
+        },
+        preview: action.preview,
+        document: { regions: [], exclusionSeeds: [] },
+        selectedRegionIds: [],
+        selectionAnchor: null,
+        past: [],
+        future: [],
+        checkpoint: null,
+        error: null,
+        progress: null
+      };
+    case "LOAD_FAILURE":
+      return { ...state, status: "error", error: action.error, progress: null };
+    case "SET_PROGRESS":
+      return {
+        ...state,
+        progress: { value: action.value, message: action.message }
+      };
+    case "CLEAR_PROGRESS":
+      return { ...state, progress: null };
+    case "CLEAR_IMAGE":
+      return {
+        ...initialState,
+        exportOptions: state.exportOptions,
+        segmentationOptions: state.segmentationOptions
+      };
+    case "ADD_REGION":
+      return state.image ? {
+        ...state,
+        document: {
+          ...state.document,
+          regions: [
+            ...state.document.regions,
+            clampRegion(action.region, state.image)
+          ]
+        },
+        selectedRegionIds: [action.region.id]
+      } : state;
+    case "UPDATE_REGION":
+      return state.image ? {
+        ...state,
+        document: {
+          ...state.document,
+          regions: state.document.regions.map(
+            (region) => region.id === action.id ? clampRegion(
+              { ...region, ...action.changes, id: region.id },
+              state.image
+            ) : region
+          )
+        }
+      } : state;
+    case "MOVE_REGIONS": {
+      if (!state.image) return state;
+      const positions = new Map(
+        action.positions.map((position) => [position.id, position])
+      );
+      if (state.document.regions.some((region) => {
+        const position = positions.get(region.id);
+        return position && (!Number.isInteger(position.x) || !Number.isInteger(position.y) || position.x < 0 || position.y < 0 || position.x + region.width > state.image.width || position.y + region.height > state.image.height);
+      }))
+        return state;
+      return {
+        ...state,
+        document: {
+          ...state.document,
+          regions: state.document.regions.map((region) => {
+            const position = positions.get(region.id);
+            return position ? { ...region, x: position.x, y: position.y } : region;
+          })
+        }
+      };
+    }
+    case "DELETE_REGION": {
+      if (!state.document.regions.some((region) => region.id === action.id))
+        return state;
+      const regions = state.document.regions.filter(
+        (region) => region.id !== action.id
+      );
+      return {
+        ...state,
+        document: { ...state.document, regions },
+        selectedRegionIds: state.selectedRegionIds.filter(
+          (id) => id !== action.id
+        )
+      };
+    }
+    case "CLEAR_SELECTION":
+      return { ...state, selectedRegionIds: [], selectionAnchor: null };
+    case "TOGGLE_REGION": {
+      if (!state.document.regions.some((r) => r.id === action.id)) return state;
+      const ids = state.selectedRegionIds;
+      return {
+        ...state,
+        selectionAnchor: action.id,
+        selectedRegionIds: ids.includes(action.id) ? ids.filter((id) => id !== action.id) : [...ids, action.id]
+      };
+    }
+    case "SELECT_RANGE": {
+      const regions = state.document.regions;
+      const target = regions.findIndex((r) => r.id === action.id);
+      if (target < 0) return state;
+      const anchor = regions.findIndex((r) => r.id === state.selectionAnchor);
+      const start = anchor < 0 ? target : anchor;
+      const range = regions.slice(Math.min(start, target), Math.max(start, target) + 1).map((r) => r.id);
+      if (target < start) range.reverse();
+      return {
+        ...state,
+        selectionAnchor: anchor < 0 ? action.id : state.selectionAnchor,
+        selectedRegionIds: [
+          ...range.filter((id) => id !== action.id),
+          action.id
+        ]
+      };
+    }
+    case "SELECT_RECTANGLE":
+      return {
+        ...state,
+        ...rectangleSelection(
+          state.document.regions,
+          state.selectedRegionIds,
+          state.selectionAnchor,
+          action.start,
+          action.end,
+          action.additive
+        )
+      };
+    case "DELETE_SELECTED":
+      return {
+        ...state,
+        document: {
+          ...state.document,
+          regions: state.document.regions.filter(
+            (r) => !state.selectedRegionIds.includes(r.id)
+          )
+        },
+        selectedRegionIds: []
+      };
+    case "MERGE_REGIONS": {
+      const regions = mergeRegions(
+        state.document.regions,
+        state.selectedRegionIds,
+        action.newId
+      );
+      return regions === state.document.regions ? state : {
+        ...state,
+        document: { ...state.document, regions },
+        selectedRegionIds: [action.newId]
+      };
+    }
+    case "SELECT_REGION": {
+      const selectedId = action.id && state.document.regions.some((r) => r.id === action.id) ? action.id : null;
+      return {
+        ...state,
+        selectedRegionIds: selectedId ? action.preserveSelection ? state.selectedRegionIds : [selectedId] : [],
+        selectionAnchor: selectedId
+      };
+    }
+    case "DUPLICATE_REGION": {
+      if (!state.document.regions.some((region) => region.id === action.id))
+        return state;
+      return {
+        ...state,
+        document: {
+          ...state.document,
+          regions: [
+            ...state.document.regions,
+            state.image ? clampRegion(action.region, state.image) : action.region
+          ]
+        },
+        selectedRegionIds: [action.region.id]
+      };
+    }
+    case "REORDER_REGION": {
+      const index = state.document.regions.findIndex(
+        (region) => region.id === action.id
+      );
+      const destination = index + action.direction;
+      if (index < 0 || destination < 0 || destination >= state.document.regions.length)
+        return state;
+      const regions = [...state.document.regions];
+      const [item] = regions.splice(index, 1);
+      if (!item) return state;
+      regions.splice(destination, 0, item);
+      return { ...state, document: { ...state.document, regions } };
+    }
+    case "REPLACE_REGIONS":
+      return {
+        ...state,
+        document: {
+          ...state.document,
+          exclusionSeeds: action.exclusionSeeds ?? state.document.exclusionSeeds,
+          regions: state.image ? action.regions.map((region) => clampRegion(region, state.image)).filter((region) => region.width > 0 && region.height > 0) : []
+        },
+        selectedRegionIds: [],
+        selectionAnchor: null
+      };
+    case "SET_EXPORT_OPTIONS":
+      return {
+        ...state,
+        exportOptions: { ...state.exportOptions, ...action.changes }
+      };
+    default:
+      return state;
+  }
+}
+function pruneAnchor(state) {
+  return state.selectionAnchor !== null && !state.document.regions.some(
+    (region) => region.id === state.selectionAnchor
+  ) ? { ...state, selectionAnchor: null } : state;
+}
+const sameDocument = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
+const appendHistory = (past, document2) => [...past, document2].slice(-100);
+function canUndo(state) {
+  return state.past.length > 0 || state.checkpoint !== null && !sameDocument(state.checkpoint, state.document);
+}
+function canRedo(state) {
+  return state.future.length > 0 && (state.checkpoint === null || sameDocument(state.checkpoint, state.document));
+}
+function commit(state) {
+  if (!state.checkpoint) return state;
+  const changed = !sameDocument(state.checkpoint, state.document);
+  return {
+    ...state,
+    checkpoint: null,
+    past: changed ? appendHistory(state.past, state.checkpoint) : state.past,
+    future: changed ? [] : state.future
+  };
+}
+function appReducer(state, action) {
+  const busy = state.status === "loading" || state.progress !== null;
+  if ((action.type === "UNDO" || action.type === "REDO" || action.type === "MERGE_REGIONS") && busy)
+    return state;
+  if (action.type === "CHECKPOINT")
+    return { ...commit(state), checkpoint: state.document };
+  if (action.type === "COMMIT") return commit(state);
+  if (action.type === "UNDO" || action.type === "REDO") {
+    const current2 = commit(state);
+    const undo = action.type === "UNDO";
+    const source = undo ? current2.past : current2.future;
+    const document2 = source.at(-1);
+    if (!document2) return current2;
+    return pruneAnchor({
+      ...current2,
+      document: document2,
+      past: undo ? source.slice(0, -1) : appendHistory(current2.past, current2.document),
+      future: undo ? appendHistory(current2.future, current2.document) : source.slice(0, -1),
+      selectedRegionIds: current2.selectedRegionIds.filter(
+        (id) => document2.regions.some((r) => r.id === id)
+      )
+    });
+  }
+  const standalone = [
+    "DELETE_REGION",
+    "DELETE_SELECTED",
+    "DUPLICATE_REGION",
+    "REORDER_REGION",
+    "MERGE_REGIONS",
+    "REPLACE_REGIONS",
+    "SET_EXCLUSION_SEEDS",
+    "REMOVE_REGION_SEED",
+    "ADD_REGION_SEED",
+    "ABSORB_REGIONS"
+  ].includes(action.type);
+  const current = standalone ? commit(state) : state;
+  const next = pruneAnchor(reduceContent(current, action));
+  if (sameDocument(current.document, next.document)) return next;
+  if (["LOAD_SUCCESS", "CLEAR_IMAGE"].includes(action.type)) return next;
+  if (current.checkpoint) return next;
+  return {
+    ...next,
+    past: appendHistory(current.past, current.document),
+    future: []
+  };
+}
+const StateContext = reactExports.createContext(null);
+const DispatchContext = reactExports.createContext(null);
+function AppProvider({ children }) {
+  const [state, dispatch] = reactExports.useReducer(appReducer, initialState);
+  const stableState = reactExports.useMemo(() => state, [state]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(StateContext.Provider, { value: stableState, children: /* @__PURE__ */ jsxRuntimeExports.jsx(DispatchContext.Provider, { value: dispatch, children }) });
+}
+function useAppState() {
+  const value = reactExports.useContext(StateContext);
+  if (!value) throw new Error("AppProviderが必要です。");
+  return value;
+}
+function useAppDispatch() {
+  const value = reactExports.useContext(DispatchContext);
+  if (!value) throw new Error("AppProviderが必要です。");
+  return value;
+}
+function resolveOutputFormat(option, source) {
+  return option === "original" ? source.format === "tga" ? "tga" : "png" : option;
+}
+var reactDomExports = requireReactDom();
+function UndoIcon({ redo = false }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "svg",
+    {
+      viewBox: "0 0 16 16",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.5",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      "aria-hidden": "true",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsx("g", { transform: redo ? "translate(16 0) scale(-1 1)" : void 0, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 3 2 6l3 3M2 6h7a4 4 0 0 1 0 8" }) })
+    }
+  );
+}
+function RedoIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(UndoIcon, { redo: true });
+}
+function SettingsIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "svg",
+    {
+      viewBox: "0 0 16 16",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.5",
+      "aria-hidden": "true",
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "8", cy: "8", r: "4.5" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "8", cy: "8", r: "1.6" }),
+        [0, 45, 90, 135, 180, 225, 270, 315].map((angle) => /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M8 1v2", transform: `rotate(${angle} 8 8)` }, angle))
+      ]
+    }
+  );
+}
+function HelpIcon() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "svg",
+    {
+      viewBox: "0 0 16 16",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.3",
+      "aria-hidden": "true",
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "8", cy: "8", r: "6.2" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "path",
+          {
+            d: "M6.2 5.6c0-2.1 4-2.1 4 0 0 1.6-2.2 1.7-2.2 3.2",
+            strokeLinecap: "round"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "8", cy: "11.3", r: "0.7", fill: "currentColor", stroke: "none" })
+      ]
+    }
+  );
+}
+function TooltipButton({
+  content,
+  children,
+  ...props
+}) {
+  const id = reactExports.useId();
+  const button = reactExports.useRef(null);
+  const tooltip = reactExports.useRef(null);
+  const [open, setOpen] = reactExports.useState(false);
+  const [position, setPosition] = reactExports.useState({ left: 8, top: 8 });
+  const place = reactExports.useCallback(() => {
+    if (!button.current || !tooltip.current) return;
+    const anchor = button.current.getBoundingClientRect();
+    const box = tooltip.current.getBoundingClientRect();
+    const width = document.documentElement.clientWidth;
+    const height = document.documentElement.clientHeight;
+    setPosition({
+      left: Math.max(
+        8,
+        Math.min(
+          width - box.width - 8,
+          anchor.left + anchor.width / 2 - box.width / 2
+        )
+      ),
+      top: Math.max(
+        8,
+        Math.min(
+          height - box.height - 8,
+          anchor.bottom + box.height + 14 <= height ? anchor.bottom + 6 : anchor.top - box.height - 6
+        )
+      )
+    });
+  }, []);
+  reactExports.useLayoutEffect(() => {
+    if (open) place();
+  }, [open, place]);
+  reactExports.useEffect(() => {
+    if (!open) return;
+    const escape = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setOpen(false);
+    };
+    window.addEventListener("keydown", escape, true);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("keydown", escape, true);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, place]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "span",
+    {
+      className: "tooltip-anchor",
+      onMouseEnter: () => setOpen(true),
+      onMouseLeave: () => setOpen(false),
+      onFocus: () => setOpen(true),
+      onBlur: () => setOpen(false),
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            ...props,
+            ref: button,
+            type: "button",
+            "aria-describedby": open ? id : void 0,
+            children
+          }
+        ),
+        open && reactDomExports.createPortal(
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "div",
+            {
+              ref: tooltip,
+              id,
+              role: "tooltip",
+              className: "help-tooltip",
+              style: position,
+              children: content
+            }
+          ),
+          document.body
+        )
+      ]
+    }
+  );
+}
+function HelpButton({ content }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    TooltipButton,
+    {
+      content,
+      "aria-label": strings.explanation,
+      className: "help-button",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsx(HelpIcon, {})
+    }
+  );
+}
 function ExportPanel({
   exporting,
   onExport
 }) {
-  const { exportOptions, regions, image } = useAppState();
+  const {
+    exportOptions,
+    document: { regions },
+    image,
+    progress,
+    status
+  } = useAppState();
   const tgaOutput = image && resolveOutputFormat(exportOptions.format, image.source) === "tga";
   const dispatch = useAppDispatch();
   const hasInvalidRegion = regions.some(
@@ -12809,7 +13415,7 @@ function ExportPanel({
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "panel-kicker", children: "EXPORT" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "export-title", children: "書き出し" }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { children: "ファイル形式" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { className: "field-label", children: "ファイル形式" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "segmented", children: ["original", "png", "tga"].map((format) => /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "input",
@@ -12824,8 +13430,32 @@ function ExportPanel({
       ] }, format)) }),
       exportOptions.format === "original" && image?.source.format === "jpeg" && /* @__PURE__ */ jsxRuntimeExports.jsx("small", { className: "format-note", children: strings.jpegOutputNotice })
     ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { "aria-labelledby": "background-processing-title", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("legend", { className: "field-label", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: "background-processing-title", children: strings.backgroundProcessing }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HelpButton, { content: strings.backgroundProcessingHelp })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "segmented", children: ["none", "transparent", "white"].map(
+        (backgroundProcessing) => /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: "radio",
+              name: "background-processing",
+              checked: (exportOptions.backgroundProcessing ?? "none") === backgroundProcessing,
+              onChange: () => dispatch({
+                type: "SET_EXPORT_OPTIONS",
+                changes: { backgroundProcessing }
+              })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: strings.backgroundProcessingOptions[backgroundProcessing] })
+        ] }, backgroundProcessing)
+      ) }),
+      exportOptions.backgroundProcessing && exportOptions.backgroundProcessing !== "none" && /* @__PURE__ */ jsxRuntimeExports.jsx("small", { className: "format-note", children: strings.manualRegionNote })
+    ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { disabled: !tgaOutput, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { children: "TGAの最適化" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { className: "field-label", children: "TGAの最適化" }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "radio-row", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "input",
@@ -12868,7 +13498,7 @@ function ExportPanel({
       {
         className: "button export-button",
         type: "button",
-        disabled: regions.length === 0 || hasInvalidRegion || exporting,
+        disabled: regions.length === 0 || hasInvalidRegion || exporting || progress !== null || status === "loading",
         onClick: onExport,
         children: exporting ? "書き出し中…" : `${regions.length}領域を書き出す`
       }
@@ -13015,47 +13645,169 @@ function LicenseDialog() {
     )
   ] });
 }
+function SegmentationSettings({ result }) {
+  const state = useAppState(), dispatch = useAppDispatch();
+  const options = state.segmentationOptions;
+  const busy = state.status === "loading" || state.progress !== null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "segmentation-settings", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("summary", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsIcon, {}),
+      strings.segmentationSettings
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { disabled: busy, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { className: "field-label", children: strings.background }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "segmented", children: ["auto", "transparent", "white"].map((background) => /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            type: "radio",
+            name: "background",
+            checked: options.background === background,
+            onChange: () => dispatch({
+              type: "SET_SEGMENTATION_OPTIONS",
+              changes: { background }
+            })
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: strings.backgrounds[background] })
+      ] }, background)) }),
+      ["whiteTolerance", "padding", "minSize"].map((key, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field-label segmentation-number", children: [
+        strings[key],
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            type: "number",
+            min: 0,
+            max: [64, 256, 1024][i],
+            step: 1,
+            value: options[key],
+            onChange: (e) => dispatch({
+              type: "SET_SEGMENTATION_OPTIONS",
+              changes: {
+                [key]: Math.max(
+                  0,
+                  Math.min(
+                    [64, 256, 1024][i],
+                    Math.round(Number(e.target.value))
+                  )
+                )
+              }
+            })
+          }
+        )
+      ] }, key)),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field-label segmentation-checkbox", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            type: "checkbox",
+            checked: options.mergeContained,
+            onChange: (e) => dispatch({
+              type: "SET_SEGMENTATION_OPTIONS",
+              changes: { mergeContained: e.target.checked }
+            })
+          }
+        ),
+        strings.mergeContained
+      ] })
+    ] }),
+    result && /* @__PURE__ */ jsxRuntimeExports.jsx("small", { className: "field-label", children: result })
+  ] });
+}
 const createImageId = () => crypto.randomUUID();
-function serializeRegions(image, regions) {
-  const document2 = {
-    version: 1,
-    source: {
-      fileName: image.fileName,
-      width: image.width,
-      height: image.height
+function serializeRegions(image, regions, segmentation = defaultSegmentationOptions, exclusionSeeds = []) {
+  return JSON.stringify(
+    {
+      version: 2,
+      source: {
+        fileName: image.fileName,
+        width: image.width,
+        height: image.height
+      },
+      segmentation,
+      exclusionSeeds,
+      regions: regions.map(({ name, x, y, width, height, seeds }) => ({
+        name,
+        x,
+        y,
+        width,
+        height,
+        ...seeds?.length ? { seeds } : {}
+      }))
     },
-    regions: regions.map(({ name, x, y, width, height }) => ({
-      name,
-      x,
-      y,
-      width,
-      height
-    }))
-  };
-  return JSON.stringify(document2, null, 2);
+    null,
+    2
+  );
 }
 function parseRegions(value) {
   const parsed = JSON.parse(value);
-  if (!parsed || typeof parsed !== "object")
-    throw new Error("JSONの形式が正しくありません。");
-  const record = parsed;
-  if (record.version !== 1 || !Array.isArray(record.regions))
-    throw new Error("未対応の領域JSONです。");
-  const source = record.source;
-  if (!source || typeof source.width !== "number" || typeof source.height !== "number") {
-    throw new Error("画像情報がありません。");
+  const object = (v) => v && typeof v === "object" ? v : {};
+  const record = object(parsed), source = object(record.source);
+  const integer = (v, min, max) => typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+  if (record.version !== 1 && record.version !== 2 || !Array.isArray(record.regions))
+    throw new Error(strings.jsonInvalid);
+  if (!integer(source.width, 1, 1e8) || !integer(source.height, 1, 1e8) || source.width * source.height > 1e8)
+    throw new Error(strings.jsonInvalid);
+  const width = source.width, height = source.height;
+  const points = (v) => Array.isArray(v) ? v.flatMap((item) => {
+    const p = object(item);
+    return integer(p.x, 0, width - 1) && integer(p.y, 0, height - 1) ? [{ x: p.x, y: p.y }] : [];
+  }) : [];
+  const regions = record.regions.map((item) => {
+    const r = object(item);
+    if (typeof r.name !== "string" || !integer(r.x, 0, width - 1) || !integer(r.y, 0, height - 1) || !integer(r.width, 1, width - r.x) || !integer(r.height, 1, height - r.y))
+      throw new Error(strings.jsonInvalid);
+    const seeds = record.version === 2 ? points(r.seeds) : [];
+    return {
+      name: r.name,
+      x: r.x,
+      y: r.y,
+      width: r.width,
+      height: r.height,
+      ...seeds.length ? { seeds } : {}
+    };
+  });
+  let segmentation;
+  if (record.version === 2) {
+    const o = object(record.segmentation);
+    if (o.background !== "auto" && o.background !== "white" && o.background !== "transparent" || !integer(o.whiteTolerance, 0, 64) || !integer(o.padding, 0, 256) || !integer(o.minSize, 0, 1024) || typeof o.mergeContained !== "boolean")
+      throw new Error(strings.jsonInvalid);
+    segmentation = {
+      background: o.background,
+      whiteTolerance: o.whiteTolerance,
+      padding: o.padding,
+      minSize: o.minSize,
+      mergeContained: o.mergeContained
+    };
   }
-  for (const item of record.regions) {
-    if (!item || typeof item !== "object")
-      throw new Error("領域の形式が正しくありません。");
-    const region = item;
-    if (typeof region.name !== "string" || !["x", "y", "width", "height"].every(
-      (key) => typeof region[key] === "number"
-    )) {
-      throw new Error("領域の値が正しくありません。");
-    }
+  return {
+    version: record.version,
+    source: {
+      fileName: typeof source.fileName === "string" ? source.fileName : "",
+      width,
+      height
+    },
+    regions,
+    segmentation,
+    exclusionSeeds: record.version === 2 ? points(record.exclusionSeeds) : []
+  };
+}
+function moveRegionPositions(regions, image, dx, dy) {
+  if (regions.length === 0) return [];
+  let minX = -image.width, minY = -image.height, maxX = image.width, maxY = image.height;
+  for (const region of regions) {
+    minX = Math.max(minX, -region.x);
+    minY = Math.max(minY, -region.y);
+    maxX = Math.min(maxX, image.width - region.x - region.width);
+    maxY = Math.min(maxY, image.height - region.y - region.height);
   }
-  return parsed;
+  const x = Math.max(minX, Math.min(maxX, normalizeCoordinate(dx)));
+  const y = Math.max(minY, Math.min(maxY, normalizeCoordinate(dy)));
+  return regions.map(({ id, x: startX, y: startY }) => ({
+    id,
+    x: startX + x,
+    y: startY + y
+  }));
 }
 function baseName(fileName) {
   return fileName.replace(/\.[^.]+$/, "");
@@ -13071,6 +13823,36 @@ const COLORS = [
 function regionColor(index) {
   return COLORS[index % COLORS.length];
 }
+const DRAG_THRESHOLD = 4;
+function reachesDragThreshold(start, current) {
+  return Math.hypot(current.x - start.x, current.y - start.y) >= DRAG_THRESHOLD;
+}
+function isInputTarget(target) {
+  return target instanceof HTMLElement && (target.closest("input, textarea, select") !== null || target.isContentEditable);
+}
+const editorTools = [
+  { id: "select", key: "v", icon: "↖", label: strings.select },
+  { id: "create", key: "r", icon: "▧", label: strings.addRegion },
+  { id: "character", key: "s", icon: "◎", label: strings.character },
+  { id: "exclude", key: "x", icon: "✕", label: strings.exclusion }
+];
+function toolForKey(event, modalOpen, dragging) {
+  if (event.ctrlKey || event.altKey || event.metaKey || event.isComposing || modalOpen || dragging || isInputTarget(event.target))
+    return null;
+  return editorTools.find((tool) => tool.key === event.key.toLowerCase())?.id ?? null;
+}
+function hitTestSeed(candidates, point, scale) {
+  let nearest = null;
+  let distance = 8;
+  for (const candidate of candidates) {
+    const d = Math.hypot(candidate.seed.x - point.x, candidate.seed.y - point.y) * scale;
+    if (d <= distance) {
+      nearest = candidate;
+      distance = d;
+    }
+  }
+  return nearest;
+}
 function hitTestRegion(regions, point, selectedId, handleTolerance) {
   const hitsHandle = (region) => Math.abs(point.x - (region.x + region.width)) <= handleTolerance && Math.abs(point.y - (region.y + region.height)) <= handleTolerance;
   const selected = regions.find((region) => region.id === selectedId);
@@ -13083,15 +13865,153 @@ function hitTestRegion(regions, point, selectedId, handleTolerance) {
   }
   return hit ? { region: hit, mode: hitsHandle(hit) ? "resize" : "move" } : null;
 }
-function ImageCanvas() {
-  const { image, preview, regions, selectedRegionId } = useAppState();
+const displays = {
+  none: { kind: "rectangle", fetchMask: false },
+  transparent: {
+    kind: "gray",
+    fetchMask: true,
+    color: "#3a3f47",
+    opacity: 0.6
+  },
+  white: { kind: "white", fetchMask: true, color: "#ffffff", opacity: 0.8 }
+};
+function maskDisplay(mode) {
+  return displays[mode];
+}
+function colorMask(bitmap, color) {
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const context = canvas.getContext("2d");
+  context.drawImage(bitmap, 0, 0);
+  context.globalCompositeOperation = "source-in";
+  context.fillStyle = color;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+function ImageCanvas({
+  client: client2,
+  onExcludePoint,
+  onSegmentPoint,
+  onSegmentAuto,
+  onRemoveRegionSeed
+}) {
+  const state = useAppState();
+  const {
+    image,
+    preview,
+    document: { regions, exclusionSeeds },
+    selectedRegionIds,
+    status,
+    progress
+  } = state;
+  const busy = status === "loading" || progress !== null;
+  const selectedRegionId = selectedRegionIds.length === 1 ? selectedRegionIds[0] : null;
   const dispatch = useAppDispatch();
   const canvasRef = reactExports.useRef(null);
   const wrapRef = reactExports.useRef(null);
   const dragRef = reactExports.useRef(null);
+  const [marquee, setMarquee] = reactExports.useState(null);
   const [tool, setTool] = reactExports.useState("create");
   const [viewport, setViewport] = reactExports.useState({ scale: 1, x: 0, y: 0 });
   const [size, setSize] = reactExports.useState({ width: 800, height: 600 });
+  const pointerOver = reactExports.useRef(false);
+  const spaceHeld = reactExports.useRef(false);
+  const [spacePan, setSpacePan] = reactExports.useState(false);
+  const [panning, setPanning] = reactExports.useState(false);
+  const [dragging, setDragging] = reactExports.useState(false);
+  const [maskPreview, setMaskPreview] = reactExports.useState(null);
+  const selectedRegion = regions.find((r) => r.id === selectedRegionId);
+  const display = maskDisplay(
+    state.exportOptions.backgroundProcessing ?? "none"
+  );
+  const fetchMask = display.fetchMask;
+  const maskKey = image && selectedRegion?.seeds?.length ? JSON.stringify([
+    image.id,
+    selectedRegion,
+    exclusionSeeds,
+    state.segmentationOptions
+  ]) : "";
+  reactExports.useEffect(() => {
+    if (!fetchMask || !client2 || !image || !selectedRegion?.seeds?.length || dragging)
+      return;
+    let stale = false;
+    let pending = true;
+    let bitmap;
+    const requestId = crypto.randomUUID();
+    void client2.request({
+      type: "region-mask-preview",
+      requestId,
+      imageId: image.id,
+      region: selectedRegion,
+      options: state.segmentationOptions,
+      exclusionSeeds
+    }).then((response) => {
+      pending = false;
+      if (stale) {
+        response.preview.close();
+        return;
+      }
+      bitmap = response.preview;
+      setMaskPreview({
+        key: maskKey,
+        bitmap,
+        gray: colorMask(bitmap, maskDisplay("transparent").color),
+        white: colorMask(bitmap, maskDisplay("white").color),
+        empty: response.empty
+      });
+    }).catch(() => {
+      pending = false;
+    });
+    return () => {
+      stale = true;
+      bitmap?.close();
+      if (pending) client2.cancel(requestId);
+    };
+  }, [
+    client2,
+    image,
+    selectedRegion,
+    regions,
+    state.segmentationOptions,
+    exclusionSeeds,
+    maskKey,
+    dragging,
+    fetchMask
+  ]);
+  reactExports.useEffect(() => {
+    const keydown = (event) => {
+      if (event.code === "Space" || event.key === " ") {
+        if (isInputTarget(event.target) || document.querySelector("dialog:modal") || !pointerOver.current)
+          return;
+        event.preventDefault();
+        spaceHeld.current = true;
+        setSpacePan(true);
+        return;
+      }
+      const next = toolForKey(
+        event,
+        !!document.querySelector("dialog:modal"),
+        dragRef.current !== null
+      );
+      if (next && !busy) {
+        event.preventDefault();
+        setTool(next);
+      }
+    };
+    const releaseSpace = (event) => {
+      if (event && event.code !== "Space" && event.key !== " ") return;
+      spaceHeld.current = false;
+      setSpacePan(false);
+    };
+    window.addEventListener("keydown", keydown);
+    window.addEventListener("keyup", releaseSpace);
+    const blur = () => releaseSpace();
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("keydown", keydown);
+      window.removeEventListener("keyup", releaseSpace);
+      window.removeEventListener("blur", blur);
+    };
+  }, [busy]);
   reactExports.useLayoutEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -13133,7 +14053,7 @@ function ImageCanvas() {
     if (!context) return;
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     context.clearRect(0, 0, size.width, size.height);
-    context.fillStyle = "#0b0d10";
+    context.fillStyle = "#d4d7dc";
     context.fillRect(0, 0, size.width, size.height);
     const tile = Math.max(4, 12 * viewport.scale);
     context.save();
@@ -13146,14 +14066,14 @@ function ImageCanvas() {
       image.height * viewport.scale
     );
     context.clip();
-    context.fillStyle = "#262a31";
+    context.fillStyle = "#ffffff";
     context.fillRect(
       0,
       0,
       image.width * viewport.scale,
       image.height * viewport.scale
     );
-    context.fillStyle = "#30353d";
+    context.fillStyle = "#e3e3e3";
     for (let y = 0; y < image.height * viewport.scale; y += tile) {
       for (let x = 0; x < image.width * viewport.scale; x += tile) {
         if ((Math.floor(x / tile) + Math.floor(y / tile)) % 2 === 0)
@@ -13169,25 +14089,71 @@ function ImageCanvas() {
       image.height * viewport.scale
     );
     context.restore();
+    const hits = marquee ? intersectingRegions(regions, marquee.start, marquee.end) : [];
+    const visibleSelection = marquee ? marquee.additive ? [.../* @__PURE__ */ new Set([...selectedRegionIds, ...hits])] : hits : selectedRegionIds;
     const drawRegion = (region, index) => {
-      const selected = region.id === selectedRegionId;
+      const selected = visibleSelection.includes(region.id);
       const color = regionColor(index);
       const x = viewport.x + region.x * viewport.scale;
       const y = viewport.y + region.y * viewport.scale;
       const width = region.width * viewport.scale;
       const height = region.height * viewport.scale;
       context.fillStyle = `${color}24`;
-      context.fillRect(x, y, width, height);
-      context.strokeStyle = color;
-      context.lineWidth = selected ? 2 : 1;
-      context.setLineDash(selected ? [] : [5, 4]);
-      context.strokeRect(
+      const masked = display.fetchMask && selected && region.id === selectedRegionId && visibleSelection.length === 1 && !!region.seeds?.length;
+      if (!masked) context.fillRect(x, y, width, height);
+      else if (display.fetchMask && !dragging && maskPreview?.key === maskKey && maskPreview.bitmap.width > 0) {
+        context.save();
+        context.globalAlpha = display.opacity;
+        context.drawImage(maskPreview[display.kind], x, y, width, height);
+        context.restore();
+        if (maskPreview.empty) {
+          context.font = "12px system-ui";
+          context.fillStyle = "#ffffff";
+          context.strokeStyle = "#171c22";
+          context.lineWidth = 3;
+          context.strokeText(
+            strings.emptyMask,
+            x + 4,
+            y + 16,
+            Math.max(1, width - 8)
+          );
+          context.fillText(
+            strings.emptyMask,
+            x + 4,
+            y + 16,
+            Math.max(1, width - 8)
+          );
+        }
+      }
+      const border = () => context.strokeRect(
         Math.round(x) + 0.5,
         Math.round(y) + 0.5,
         Math.round(width),
         Math.round(height)
       );
+      context.setLineDash(selected ? [] : [5, 4]);
+      context.strokeStyle = "rgba(0, 0, 0, 0.55)";
+      context.lineWidth = (selected ? 2 : 1) + 2;
+      border();
+      context.strokeStyle = color;
+      context.lineWidth = selected ? 2 : 1;
+      border();
       context.setLineDash([]);
+      for (const seed of region.seeds ?? []) {
+        context.beginPath();
+        context.arc(
+          viewport.x + seed.x * viewport.scale,
+          viewport.y + seed.y * viewport.scale,
+          4,
+          0,
+          Math.PI * 2
+        );
+        context.fillStyle = color;
+        context.fill();
+        context.strokeStyle = "#081015";
+        context.lineWidth = 1.5;
+        context.stroke();
+      }
       context.font = "600 12px system-ui";
       const labelWidth = Math.min(
         width,
@@ -13197,34 +14163,87 @@ function ImageCanvas() {
       context.fillRect(x, y - 20, Math.max(24, labelWidth), 20);
       context.fillStyle = "#081015";
       context.fillText(region.name, x + 6, y - 6, Math.max(12, width - 8));
-      if (selected) {
+      if (selected && visibleSelection.length === 1) {
         context.fillStyle = color;
         context.fillRect(x + width - 5, y + height - 5, 10, 10);
+        context.strokeStyle = "#171c22";
+        context.lineWidth = 1.5;
+        context.strokeRect(x + width - 5, y + height - 5, 10, 10);
       }
     };
     regions.forEach((region, index) => {
-      if (region.id !== selectedRegionId) drawRegion(region, index);
+      if (!visibleSelection.includes(region.id)) drawRegion(region, index);
     });
-    const selectedIndex = regions.findIndex(
-      (region) => region.id === selectedRegionId
-    );
-    if (selectedIndex !== -1)
-      drawRegion(regions[selectedIndex], selectedIndex);
-  }, [image, preview, regions, selectedRegionId, size, viewport]);
+    regions.forEach((region, index) => {
+      if (visibleSelection.includes(region.id)) drawRegion(region, index);
+    });
+    for (const seed of exclusionSeeds) {
+      const x = viewport.x + seed.x * viewport.scale, y = viewport.y + seed.y * viewport.scale;
+      context.beginPath();
+      context.arc(x, y, 5, 0, Math.PI * 2);
+      context.fillStyle = "#d51b26";
+      context.fill();
+      context.strokeStyle = "white";
+      context.lineWidth = 2;
+      context.stroke();
+      context.beginPath();
+      context.moveTo(x - 2, y - 2);
+      context.lineTo(x + 2, y + 2);
+      context.moveTo(x + 2, y - 2);
+      context.lineTo(x - 2, y + 2);
+      context.stroke();
+    }
+    if (marquee) {
+      const x = viewport.x + Math.min(marquee.start.x, marquee.end.x) * viewport.scale;
+      const y = viewport.y + Math.min(marquee.start.y, marquee.end.y) * viewport.scale;
+      const width = Math.abs(marquee.end.x - marquee.start.x) * viewport.scale;
+      const height = Math.abs(marquee.end.y - marquee.start.y) * viewport.scale;
+      context.fillStyle = "#1f232912";
+      context.fillRect(x, y, width, height);
+      context.setLineDash([5, 4]);
+      context.strokeStyle = "#ffffff";
+      context.lineWidth = 3;
+      context.strokeRect(x, y, width, height);
+      context.strokeStyle = "#1f2329";
+      context.lineWidth = 1;
+      context.strokeRect(x, y, width, height);
+      context.setLineDash([]);
+    }
+  }, [
+    image,
+    preview,
+    regions,
+    selectedRegionIds,
+    selectedRegionId,
+    size,
+    viewport,
+    marquee,
+    exclusionSeeds,
+    dragging,
+    maskPreview,
+    maskKey,
+    display
+  ]);
   if (!image) return null;
   const imagePoint = (event) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     return {
-      x: Math.round(
-        (event.clientX - bounds.left - viewport.x) / viewport.scale
-      ),
-      y: Math.round((event.clientY - bounds.top - viewport.y) / viewport.scale)
+      x: (event.clientX - bounds.left - viewport.x) / viewport.scale,
+      y: (event.clientY - bounds.top - viewport.y) / viewport.scale
     };
   };
+  const roundedPoint = (point) => ({
+    x: Math.round(point.x),
+    y: Math.round(point.y)
+  });
   const pointerDown = (event) => {
+    if (dragRef.current || busy) return;
+    event.currentTarget.focus();
     event.currentTarget.setPointerCapture(event.pointerId);
-    const point = imagePoint(event);
-    if (tool === "pan" || event.button === 1) {
+    const rawPoint = imagePoint(event);
+    const point = roundedPoint(rawPoint);
+    if (event.button === 1 || event.button === 0 && spaceHeld.current) {
+      setPanning(true);
       dragRef.current = {
         type: "pan",
         startX: event.clientX,
@@ -13233,44 +14252,71 @@ function ImageCanvas() {
       };
       return;
     }
+    const gesture = {
+      screenStart: { x: event.clientX, y: event.clientY },
+      start: point,
+      active: false
+    };
+    if (tool === "character" || tool === "exclude") {
+      dragRef.current = {
+        ...gesture,
+        start: { x: Math.floor(rawPoint.x), y: Math.floor(rawPoint.y) },
+        type: tool
+      };
+      return;
+    }
     if (tool === "create") {
       if (point.x < 0 || point.y < 0 || point.x >= image.width || point.y >= image.height)
         return;
-      const id = createRegionId();
-      dispatch({
-        type: "ADD_REGION",
+      dragRef.current = {
+        ...gesture,
+        type: "create",
         region: {
-          id,
+          id: createRegionId(),
           name: nextRegionName(regions, baseName(image.fileName)),
           x: point.x,
           y: point.y,
           width: 1,
           height: 1
         }
-      });
-      dragRef.current = {
-        type: "create",
-        startX: point.x,
-        startY: point.y,
-        id
       };
       return;
     }
     const hit = hitTestRegion(
       regions,
-      point,
+      rawPoint,
       selectedRegionId,
-      9 / viewport.scale
+      selectedRegionIds.length >= 2 ? -1 : 9 / viewport.scale
     );
-    dispatch({ type: "SELECT_REGION", id: hit?.region.id ?? null });
-    if (hit) {
-      dragRef.current = {
-        type: hit.mode,
-        startX: point.x,
-        startY: point.y,
-        region: hit.region
-      };
+    if (hit && event.shiftKey) {
+      dispatch({ type: "TOGGLE_REGION", id: hit.region.id });
+      return;
     }
+    if (!hit) {
+      dragRef.current = {
+        ...gesture,
+        start: rawPoint,
+        type: "marquee",
+        additive: event.shiftKey
+      };
+      return;
+    }
+    const multiple = selectedRegionIds.length >= 2 && selectedRegionIds.includes(hit.region.id);
+    const mode = hit.mode === "resize" && hit.region.id === selectedRegionId ? "resize" : "move";
+    if (mode === "move")
+      dispatch({
+        type: "SELECT_REGION",
+        id: hit.region.id,
+        preserveSelection: multiple
+      });
+    dragRef.current = mode === "resize" ? { ...gesture, type: "resize", region: hit.region } : {
+      ...gesture,
+      type: "move",
+      regions: multiple ? regions.filter(
+        (region) => selectedRegionIds.includes(region.id)
+      ) : [hit.region],
+      clickedId: hit.region.id
+    };
   };
   const pointerMove = (event) => {
     const drag = dragRef.current;
@@ -13283,38 +14329,116 @@ function ImageCanvas() {
       });
       return;
     }
-    const point = imagePoint(event);
-    if (drag.type === "create") {
-      const x = Math.min(drag.startX, point.x);
-      const y = Math.min(drag.startY, point.y);
-      dispatch({
-        type: "UPDATE_REGION",
-        id: drag.id,
-        changes: {
-          x,
-          y,
-          width: Math.max(1, Math.abs(point.x - drag.startX)),
-          height: Math.max(1, Math.abs(point.y - drag.startY))
-        }
-      });
-    } else if (drag.type === "move") {
+    if (!drag.active) {
+      if (!reachesDragThreshold(drag.screenStart, {
+        x: event.clientX,
+        y: event.clientY
+      }))
+        return;
+      drag.active = true;
+      setDragging(true);
+      if (drag.type !== "marquee" && drag.type !== "character" && drag.type !== "exclude")
+        dispatch({ type: "CHECKPOINT" });
+      if (drag.type === "create")
+        dispatch({ type: "ADD_REGION", region: drag.region });
+    }
+    if (drag.type === "character" || drag.type === "exclude") return;
+    const rawPoint = imagePoint(event);
+    const point = roundedPoint(rawPoint);
+    if (drag.type === "marquee") {
+      setMarquee({ start: drag.start, end: rawPoint, additive: drag.additive });
+    } else if (drag.type === "create") {
       dispatch({
         type: "UPDATE_REGION",
         id: drag.region.id,
         changes: {
-          x: drag.region.x + point.x - drag.startX,
-          y: drag.region.y + point.y - drag.startY
+          x: Math.min(drag.start.x, point.x),
+          y: Math.min(drag.start.y, point.y),
+          width: Math.max(1, Math.abs(point.x - drag.start.x)),
+          height: Math.max(1, Math.abs(point.y - drag.start.y))
         }
+      });
+    } else if (drag.type === "move") {
+      dispatch({
+        type: "MOVE_REGIONS",
+        positions: moveRegionPositions(
+          drag.regions,
+          image,
+          point.x - drag.start.x,
+          point.y - drag.start.y
+        )
       });
     } else {
       dispatch({
         type: "UPDATE_REGION",
         id: drag.region.id,
         changes: {
-          width: Math.max(1, point.x - drag.region.x),
-          height: Math.max(1, point.y - drag.region.y)
+          width: Math.max(1, drag.region.width + point.x - drag.start.x),
+          height: Math.max(1, drag.region.height + point.y - drag.start.y)
         }
       });
+    }
+  };
+  const pointerUp = (event) => {
+    pointerMove(event);
+    const drag = dragRef.current;
+    if (drag && drag.type !== "pan") {
+      if (drag.type === "exclude") {
+        if (!drag.active && !busy) {
+          const hit = hitTestSeed(
+            exclusionSeeds.map((seed, index2) => ({ seed, index: index2 })),
+            imagePoint(event),
+            viewport.scale
+          );
+          const index = hit?.index ?? -1;
+          if (index >= 0)
+            dispatch({
+              type: "SET_EXCLUSION_SEEDS",
+              seeds: exclusionSeeds.filter((_, i) => i !== index)
+            });
+          else onExcludePoint?.(drag.start);
+        }
+      } else if (drag.type === "character") {
+        if (!drag.active && !busy) {
+          const hit = event.shiftKey ? null : hitTestSeed(
+            regions.flatMap(
+              (region) => (region.seeds ?? []).map((seed) => ({ region, seed }))
+            ),
+            imagePoint(event),
+            viewport.scale
+          );
+          if (hit) onRemoveRegionSeed?.(hit.region, hit.seed);
+          else onSegmentPoint?.(drag.start, event.shiftKey);
+        }
+      } else if (drag.type === "marquee") {
+        if (drag.active)
+          dispatch({
+            type: "SELECT_RECTANGLE",
+            start: drag.start,
+            end: imagePoint(event),
+            additive: drag.additive
+          });
+        else if (!drag.additive) dispatch({ type: "CLEAR_SELECTION" });
+      } else if (drag.active) dispatch({ type: "COMMIT" });
+      else if (drag.type === "move")
+        dispatch({ type: "SELECT_REGION", id: drag.clickedId });
+    }
+    dragRef.current = null;
+    setPanning(false);
+    setDragging(false);
+    setMarquee(null);
+  };
+  const doubleClick = (event) => {
+    if (tool !== "create" || spaceHeld.current) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const point = {
+      x: (event.clientX - bounds.left - viewport.x) / viewport.scale,
+      y: (event.clientY - bounds.top - viewport.y) / viewport.scale
+    };
+    const hit = hitTestRegion(regions, point, null, -1);
+    if (hit) {
+      dispatch({ type: "SELECT_REGION", id: hit.region.id });
+      setTool("select");
     }
   };
   const wheel = (event) => {
@@ -13335,109 +14459,167 @@ function ImageCanvas() {
     });
   };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "editor-shell", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "canvas-toolbar", role: "toolbar", "aria-label": "編集ツール", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tool-group", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            className: tool === "select" ? "active" : "",
-            type: "button",
-            onClick: () => setTool("select"),
-            children: "↖ 選択・編集"
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            className: tool === "create" ? "active" : "",
-            type: "button",
-            onClick: () => setTool("create"),
-            children: "▧ 領域を描画"
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            className: tool === "pan" ? "active" : "",
-            type: "button",
-            onClick: () => setTool("pan"),
-            children: "✥ パン"
-          }
-        )
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tool-group zoom-controls", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            type: "button",
-            onClick: () => setViewport((value) => ({
-              ...value,
-              scale: Math.max(0.05, value.scale / 1.25)
-            })),
-            children: "−"
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-          Math.round(viewport.scale * 100),
-          "%"
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            type: "button",
-            onClick: () => setViewport((value) => ({
-              ...value,
-              scale: Math.min(32, value.scale * 1.25)
-            })),
-            children: "＋"
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            type: "button",
-            onClick: () => setViewport({
-              scale: 1,
-              x: (size.width - image.width) / 2,
-              y: (size.height - image.height) / 2
-            }),
-            children: "100%"
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: fit, children: "全体表示" })
-      ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `canvas-wrap tool-${tool}`, ref: wrapRef, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "canvas",
-        {
-          ref: canvasRef,
-          "aria-label": "画像編集キャンバス",
-          tabIndex: 0,
-          onPointerDown: pointerDown,
-          onPointerMove: pointerMove,
-          onPointerUp: () => {
-            dragRef.current = null;
-          },
-          onPointerCancel: () => {
-            dragRef.current = null;
-          },
-          onWheel: wheel,
-          onKeyDown: (event) => {
-            if ((event.key === "Delete" || event.key === "Backspace") && selectedRegionId)
-              dispatch({ type: "DELETE_REGION", id: selectedRegionId });
-          }
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "canvas-status", children: [
-        image.width,
-        " × ",
-        image.height,
-        "px ·",
-        " ",
-        strings.sourceStatus(image.source)
-      ] })
-    ] })
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        className: "canvas-toolbar",
+        role: "toolbar",
+        "aria-label": strings.editorTools,
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "tool-group segmented tool-segmented", children: editorTools.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              disabled: busy,
+              className: tool === item.id ? "active" : "",
+              "aria-pressed": tool === item.id,
+              type: "button",
+              title: `${item.label} (${item.key.toUpperCase()})`,
+              onClick: () => {
+                if (!dragRef.current) setTool(item.id);
+              },
+              children: [
+                item.icon,
+                " ",
+                item.label,
+                " (",
+                item.key.toUpperCase(),
+                ")"
+              ]
+            },
+            item.id
+          )) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tool-group auto-controls", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "auto-button",
+                type: "button",
+                disabled: busy,
+                onClick: onSegmentAuto,
+                children: strings.autoSegment
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(HelpButton, { content: strings.autoSegmentHelp })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tool-group history-controls", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              TooltipButton,
+              {
+                content: strings.undoTitle,
+                "aria-label": strings.undo,
+                className: "icon-button",
+                disabled: busy || !canUndo(state),
+                onClick: () => dispatch({ type: "UNDO" }),
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx(UndoIcon, {})
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              TooltipButton,
+              {
+                content: strings.redoTitle,
+                "aria-label": strings.redo,
+                className: "icon-button",
+                disabled: busy || !canRedo(state),
+                onClick: () => dispatch({ type: "REDO" }),
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx(RedoIcon, {})
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tool-group zoom-controls", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                type: "button",
+                onClick: () => setViewport((value) => ({
+                  ...value,
+                  scale: Math.max(0.05, value.scale / 1.25)
+                })),
+                children: "−"
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+              Math.round(viewport.scale * 100),
+              "%"
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                type: "button",
+                onClick: () => setViewport((value) => ({
+                  ...value,
+                  scale: Math.min(32, value.scale * 1.25)
+                })),
+                children: "＋"
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                type: "button",
+                onClick: () => setViewport({
+                  scale: 1,
+                  x: (size.width - image.width) / 2,
+                  y: (size.height - image.height) / 2
+                }),
+                children: "100%"
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: fit, children: strings.fit })
+          ] })
+        ]
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        className: `canvas-wrap tool-${tool}${spacePan ? " space-pan" : ""}${panning ? " is-panning" : ""}`,
+        ref: wrapRef,
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "canvas",
+            {
+              ref: canvasRef,
+              "aria-label": strings.canvas,
+              tabIndex: 0,
+              onPointerEnter: () => {
+                pointerOver.current = true;
+              },
+              onPointerLeave: () => {
+                pointerOver.current = false;
+              },
+              onPointerDown: pointerDown,
+              onPointerMove: pointerMove,
+              onPointerUp: pointerUp,
+              onDoubleClick: doubleClick,
+              onPointerCancel: () => {
+                const drag = dragRef.current;
+                if (drag && drag.type !== "pan" && drag.type !== "marquee" && drag.active)
+                  dispatch({ type: "COMMIT" });
+                setPanning(false);
+                setDragging(false);
+                dragRef.current = null;
+                setMarquee(null);
+              },
+              onWheel: wheel,
+              onKeyDown: (event) => {
+                if ((event.key === "Delete" || event.key === "Backspace") && selectedRegionIds.length > 0) {
+                  event.preventDefault();
+                  dispatch({ type: "DELETE_SELECTED" });
+                }
+              }
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "canvas-status", children: [
+            image.width,
+            " × ",
+            image.height,
+            "px ·",
+            " ",
+            strings.sourceStatus(image.source)
+          ] })
+        ]
+      }
+    )
   ] });
 }
 function NumberField({
@@ -13461,8 +14643,15 @@ function NumberField({
   ] });
 }
 function RegionList() {
-  const { regions, selectedRegionId, image } = useAppState();
+  const {
+    document: { regions },
+    selectedRegionIds,
+    image,
+    status,
+    progress
+  } = useAppState();
   const dispatch = useAppDispatch();
+  const busy = status === "loading" || progress !== null;
   const update = (id, changes) => dispatch({ type: "UPDATE_REGION", id, changes });
   const duplicate = (region) => {
     if (!image) return;
@@ -13487,24 +14676,50 @@ function RegionList() {
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "panel-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "panel-kicker", children: "REGIONS" }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("h2", { id: "regions-title", children: [
-            "切り出し領域 ",
+            strings.regions,
+            " ",
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "count", children: regions.length })
           ] })
         ] }) }),
+        selectedRegionIds.length >= 2 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "multi-selection", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: strings.selectedCount(selectedRegionIds.length) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: "button ghost",
+              type: "button",
+              disabled: busy,
+              onClick: () => dispatch({ type: "MERGE_REGIONS", newId: createRegionId() }),
+              children: strings.merge
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              type: "button",
+              className: "button ghost",
+              onClick: () => dispatch({ type: "DELETE_SELECTED" }),
+              children: strings.delete
+            }
+          )
+        ] }),
         regions.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "empty-list", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "まだ領域がありません" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: "ツールバーの「領域を描画」を選び、画像上をドラッグしてください。" })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: strings.emptyRegions }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: strings.drawHint })
         ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { className: "region-list", children: regions.map((region, index) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "li",
           {
-            className: selectedRegionId === region.id ? "selected" : "",
+            className: selectedRegionIds.includes(region.id) ? "selected" : "",
             children: [
               /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "button",
                 {
                   className: "region-summary",
                   type: "button",
-                  onClick: () => dispatch({ type: "SELECT_REGION", id: region.id }),
+                  onClick: (event) => dispatch({
+                    type: event.shiftKey ? "SELECT_RANGE" : event.ctrlKey || event.metaKey ? "TOGGLE_REGION" : "SELECT_REGION",
+                    id: region.id
+                  }),
                   children: [
                     /* @__PURE__ */ jsxRuntimeExports.jsx(
                       "span",
@@ -13527,94 +14742,112 @@ function RegionList() {
                   ]
                 }
               ),
-              selectedRegionId === region.id && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "region-detail", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "name-field", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "名前" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "input",
-                    {
-                      value: region.name,
-                      onChange: (event) => update(region.id, { name: event.target.value })
-                    }
-                  )
-                ] }),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "coordinates", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    NumberField,
-                    {
-                      label: "X",
-                      value: region.x,
-                      onChange: (x) => update(region.id, { x })
-                    }
-                  ),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    NumberField,
-                    {
-                      label: "Y",
-                      value: region.y,
-                      onChange: (y) => update(region.id, { y })
-                    }
-                  ),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    NumberField,
-                    {
-                      label: "W",
-                      value: region.width,
-                      positive: true,
-                      onChange: (width) => update(region.id, { width })
-                    }
-                  ),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    NumberField,
-                    {
-                      label: "H",
-                      value: region.height,
-                      positive: true,
-                      onChange: (height) => update(region.id, { height })
-                    }
-                  )
-                ] }),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "region-actions", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
-                    {
-                      type: "button",
-                      title: "上へ",
-                      disabled: index === 0,
-                      onClick: () => dispatch({
-                        type: "REORDER_REGION",
-                        id: region.id,
-                        direction: -1
-                      }),
-                      children: "↑"
-                    }
-                  ),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
-                    {
-                      type: "button",
-                      title: "下へ",
-                      disabled: index === regions.length - 1,
-                      onClick: () => dispatch({
-                        type: "REORDER_REGION",
-                        id: region.id,
-                        direction: 1
-                      }),
-                      children: "↓"
-                    }
-                  ),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => duplicate(region), children: "複製" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
-                    {
-                      className: "danger",
-                      type: "button",
-                      onClick: () => dispatch({ type: "DELETE_REGION", id: region.id }),
-                      children: "削除"
-                    }
-                  )
-                ] })
-              ] })
+              selectedRegionIds.length === 1 && selectedRegionIds.includes(region.id) && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "div",
+                {
+                  className: "region-detail",
+                  onFocusCapture: (event) => {
+                    if (event.target instanceof HTMLInputElement)
+                      dispatch({ type: "CHECKPOINT" });
+                  },
+                  onBlurCapture: (event) => {
+                    if (event.target instanceof HTMLInputElement)
+                      dispatch({ type: "COMMIT" });
+                  },
+                  onKeyDown: (event) => {
+                    if (event.key === "Enter" && event.target instanceof HTMLInputElement)
+                      event.target.blur();
+                  },
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "name-field", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: strings.name }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "input",
+                        {
+                          value: region.name,
+                          onChange: (event) => update(region.id, { name: event.target.value })
+                        }
+                      )
+                    ] }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "coordinates", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        NumberField,
+                        {
+                          label: "X",
+                          value: region.x,
+                          onChange: (x) => update(region.id, { x })
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        NumberField,
+                        {
+                          label: "Y",
+                          value: region.y,
+                          onChange: (y) => update(region.id, { y })
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        NumberField,
+                        {
+                          label: "W",
+                          value: region.width,
+                          positive: true,
+                          onChange: (width) => update(region.id, { width })
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        NumberField,
+                        {
+                          label: "H",
+                          value: region.height,
+                          positive: true,
+                          onChange: (height) => update(region.id, { height })
+                        }
+                      )
+                    ] }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "region-actions", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "button",
+                        {
+                          type: "button",
+                          title: strings.moveUp,
+                          disabled: index === 0,
+                          onClick: () => dispatch({
+                            type: "REORDER_REGION",
+                            id: region.id,
+                            direction: -1
+                          }),
+                          children: "↑"
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "button",
+                        {
+                          type: "button",
+                          title: strings.moveDown,
+                          disabled: index === regions.length - 1,
+                          onClick: () => dispatch({
+                            type: "REORDER_REGION",
+                            id: region.id,
+                            direction: 1
+                          }),
+                          children: "↓"
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => duplicate(region), children: strings.duplicate }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "button",
+                        {
+                          className: "danger",
+                          type: "button",
+                          onClick: () => dispatch({ type: "DELETE_SELECTED" }),
+                          children: strings.delete
+                        }
+                      )
+                    ] })
+                  ]
+                }
+              )
             ]
           },
           region.id
@@ -13625,6 +14858,287 @@ function RegionList() {
 }
 const jsContent = `(function() {
   "use strict";
+  function* flood(mask, width, start, from, to, diagonal) {
+    let stack = new Int32Array(256), length = 0, count = 0, work = 0;
+    let minX = width, minY = mask.length / width, maxX = 0, maxY = 0;
+    const pushRun = (p) => {
+      const y = Math.floor(p / width), row = y * width;
+      let left = p, right = p;
+      while (left > row && mask[left - 1] === from) left--;
+      while (right + 1 < row + width && mask[right + 1] === from) right++;
+      mask.fill(to, left, right + 1);
+      if (length + 2 > stack.length) {
+        const next = new Int32Array(stack.length * 2);
+        next.set(stack);
+        stack = next;
+      }
+      stack[length++] = left;
+      stack[length++] = right;
+      count += right - left + 1;
+      minX = Math.min(minX, left - row);
+      maxX = Math.max(maxX, right - row);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+      return right;
+    };
+    pushRun(start);
+    while (length) {
+      const right = stack[--length], left = stack[--length];
+      const y = Math.floor(left / width), row = y * width;
+      const lo = Math.max(row, left - (diagonal ? 1 : 0)), hi = Math.min(row + width - 1, right + (diagonal ? 1 : 0));
+      for (const offset of [-width, width]) {
+        if (lo + offset < 0 || hi + offset >= mask.length) continue;
+        for (let p = lo + offset; p <= hi + offset; p++) {
+          if (mask[p] === from) p = pushRun(p);
+          if (++work % 65536 === 0) yield;
+        }
+      }
+    }
+    return {
+      bounds: {
+        x: minX,
+        y: minY,
+        width: maxX - minX + 1,
+        height: maxY - minY + 1
+      },
+      count
+    };
+  }
+  const isWhite = (rgba, p, tolerance) => rgba[p * 4] >= 255 - tolerance && rgba[p * 4 + 1] >= 255 - tolerance && rgba[p * 4 + 2] >= 255 - tolerance;
+  function* backgroundMask(rgba, width, height, options) {
+    const size = width * height, mask = new Uint8Array(size);
+    let background = options.background === "white" ? "white" : "transparent";
+    if (options.background === "auto") {
+      background = "white";
+      for (let p = 0; p < size; p++) {
+        if (rgba[p * 4 + 3] === 0) {
+          background = "transparent";
+          break;
+        }
+        if (p % 262144 === 0) yield;
+      }
+    }
+    for (let p = 0; p < size; p++) {
+      mask[p] = Number(
+        background === "transparent" ? rgba[p * 4 + 3] === 0 : isWhite(rgba, p, options.whiteTolerance)
+      );
+      if (p % 262144 === 0) yield;
+    }
+    if (background === "white") {
+      let best = -1, count = 0;
+      for (let p = 0; p < size; p++) {
+        if (mask[p] === 1) {
+          const component = yield* flood(mask, width, p, 1, 2, false);
+          if (component.count > count) {
+            best = p;
+            count = component.count;
+          }
+        }
+        if (p % 262144 === 0) yield;
+      }
+      if (best >= 0) yield* flood(mask, width, best, 2, 3, false);
+      for (let p = 0; p < size; p++) {
+        mask[p] = Number(mask[p] === 3);
+        if (p % 262144 === 0) yield;
+      }
+    }
+    return { mask, background };
+  }
+  function* representativeSeedSteps(mask, imageWidth, bounds, rgba, background, tolerance) {
+    const transposed = bounds.width > bounds.height;
+    const w = transposed ? bounds.height : bounds.width;
+    const h = transposed ? bounds.width : bounds.height;
+    const deltas = new Uint8Array(w * h);
+    let previous = new Int32Array(w), current = new Int32Array(w);
+    const pixel = (xx, yy) => transposed ? (bounds.y + xx) * imageWidth + bounds.x + yy : (bounds.y + yy) * imageWidth + bounds.x + xx;
+    for (let yy = 0; yy < h; yy++) {
+      for (let xx = 0; xx < w; xx++) {
+        current[xx] = mask[pixel(xx, yy)] !== 3 ? 0 : Math.min(
+          (xx ? current[xx - 1] : 0) + 3,
+          previous[xx] + 3,
+          (xx ? previous[xx - 1] : 0) + 4,
+          (xx + 1 < w ? previous[xx + 1] : 0) + 4
+        );
+      }
+      for (let xx = w - 1; xx >= 0; xx--)
+        current[xx] = Math.min(
+          current[xx],
+          (xx + 1 < w ? current[xx + 1] : 0) + 3
+        );
+      for (let xx = 0; xx < w; xx++)
+        deltas[yy * w + xx] = current[xx] - (xx ? current[xx - 1] : 0) + 3;
+      [previous, current] = [current, previous];
+      if (yy % 32 === 0) yield;
+    }
+    previous.fill(0);
+    let best = -1, bestDistance = -1, fallback = -1, fallbackDistance = -1;
+    for (let yy = h - 1; yy >= 0; yy--) {
+      let distance = 0;
+      for (let xx = 0; xx < w; xx++) {
+        distance += deltas[yy * w + xx] - 3;
+        current[xx] = distance;
+      }
+      for (let xx = w - 1; xx >= 0; xx--) {
+        const p2 = pixel(xx, yy);
+        if (mask[p2] !== 3) {
+          current[xx] = 0;
+          continue;
+        }
+        const d = Math.min(
+          current[xx],
+          (xx + 1 < w ? current[xx + 1] : 0) + 3,
+          previous[xx] + 3,
+          (xx ? previous[xx - 1] : 0) + 4,
+          (xx + 1 < w ? previous[xx + 1] : 0) + 4
+        );
+        current[xx] = d;
+        if (d > fallbackDistance || d === fallbackDistance && p2 < fallback) {
+          fallback = p2;
+          fallbackDistance = d;
+        }
+        if (!(background === "white" && isWhite(rgba, p2, tolerance)) && (d > bestDistance || d === bestDistance && p2 < best)) {
+          best = p2;
+          bestDistance = d;
+        }
+      }
+      [previous, current] = [current, previous];
+      if (yy % 32 === 0) yield;
+    }
+    const p = best < 0 ? fallback : best;
+    return { x: p % imageWidth, y: Math.floor(p / imageWidth) };
+  }
+  function* componentSteps(mask, width, start) {
+    return yield* flood(mask, width, start, 0, 3, true);
+  }
+  function* analyzeComponents(mask, width, rgba, background, tolerance) {
+    const work = mask.slice(), components = [];
+    for (let p = 0; p < work.length; p++) {
+      if (work[p] === 0) {
+        const c = yield* componentSteps(work, width, p);
+        const seed = yield* representativeSeedSteps(
+          work,
+          width,
+          c.bounds,
+          rgba,
+          background,
+          tolerance
+        );
+        components.push({ bounds: c.bounds, pixelCount: c.count, seed });
+        const b = c.bounds;
+        for (let yy = b.y; yy < b.y + b.height; yy++) {
+          for (let xx = b.x; xx < b.x + b.width; xx++) {
+            const i2 = yy * width + xx;
+            if (work[i2] === 3) work[i2] = 2;
+          }
+          if (yy % 32 === 0) yield;
+        }
+      }
+      if (p % 262144 === 0) yield;
+    }
+    return components;
+  }
+  function* exclusionSteps(rgba, width, base, background, tolerance, seeds) {
+    if (background !== "white" || !seeds.length) return base;
+    const result = base.slice();
+    const visited = new Uint8Array(base.length);
+    let stack = new Int32Array(256);
+    let length = 0;
+    let work = 0;
+    for (const seed of seeds) {
+      if (!validPoint(seed, width, base.length / width)) continue;
+      visited.fill(0);
+      const start = seed.y * width + seed.x;
+      const r = rgba[start * 4], g = rgba[start * 4 + 1], b = rgba[start * 4 + 2];
+      const matches = (p) => !visited[p] && Math.abs(rgba[p * 4] - r) <= tolerance && Math.abs(rgba[p * 4 + 1] - g) <= tolerance && Math.abs(rgba[p * 4 + 2] - b) <= tolerance;
+      const pushRun = (p) => {
+        const row = Math.floor(p / width) * width;
+        let left = p, right = p;
+        while (left > row && matches(left - 1)) left--;
+        while (right + 1 < row + width && matches(right + 1)) right++;
+        visited.fill(1, left, right + 1);
+        result.fill(1, left, right + 1);
+        work += right - left + 1;
+        if (length + 2 > stack.length) {
+          const next = new Int32Array(stack.length * 2);
+          next.set(stack);
+          stack = next;
+        }
+        stack[length++] = left;
+        stack[length++] = right;
+        return right;
+      };
+      pushRun(start);
+      while (length) {
+        const right = stack[--length], left = stack[--length];
+        for (const offset of [-width, width]) {
+          if (left + offset < 0 || right + offset >= base.length) continue;
+          for (let p = left + offset; p <= right + offset; p++) {
+            if (matches(p)) p = pushRun(p);
+            if (++work >= 65536) {
+              work = 0;
+              yield;
+            }
+          }
+        }
+      }
+      yield;
+    }
+    return result;
+  }
+  const validPoint = (p, width, height) => Number.isInteger(p.x) && Number.isInteger(p.y) && p.x >= 0 && p.y >= 0 && p.x < width && p.y < height;
+  function* regionMaskSteps(background, width, region) {
+    const work = background.slice();
+    for (const seed of region.seeds ?? []) {
+      if (!validPoint(seed, width, background.length / width)) continue;
+      const p = seed.y * width + seed.x;
+      if (work[p] === 0) yield* componentSteps(work, width, p);
+    }
+    const mask = new Uint8Array(region.width * region.height);
+    for (let y = 0; y < region.height; y++) {
+      for (let x2 = 0; x2 < region.width; x2++)
+        mask[y * region.width + x2] = Number(
+          work[(region.y + y) * width + region.x + x2] === 3
+        );
+      if (y % 64 === 0) yield;
+    }
+    return mask;
+  }
+  function transformMaskedRgba(rgba, mask, mode) {
+    if (!mask || mode === "none") return rgba;
+    const result = rgba.slice();
+    for (let p = 0; p < mask.length; p++) {
+      const i2 = p * 4, alpha = rgba[i2 + 3];
+      if (mode === "white") {
+        for (let c = 0; c < 3; c++)
+          result[i2 + c] = mask[p] ? Math.round(rgba[i2 + c] * alpha / 255 + 255 * (1 - alpha / 255)) : 255;
+        result[i2 + 3] = 255;
+      } else if (!mask[p] && alpha !== 0) result.fill(0, i2, i2 + 4);
+    }
+    return result;
+  }
+  function* maskPreviewPixels(mask) {
+    const pixels = new Uint8ClampedArray(mask.length * 4);
+    for (let p = 0; p < mask.length; p++) {
+      if (!mask[p]) {
+        pixels[p * 4] = 58;
+        pixels[p * 4 + 1] = 63;
+        pixels[p * 4 + 2] = 71;
+        pixels[p * 4 + 3] = 255;
+      }
+      if (p % 262144 === 0) yield;
+    }
+    return pixels;
+  }
+  function isWhiteSeed(rgba, pixel, background, tolerance) {
+    return background === "white" && isWhite(rgba, pixel, tolerance);
+  }
+  const defaultSegmentationOptions = {
+    background: "auto",
+    whiteTolerance: 0,
+    padding: 8,
+    minSize: 16,
+    mergeContained: true
+  };
   var u8 = Uint8Array, u16 = Uint16Array, i32 = Int32Array;
   var fleb = new u8([
     0,
@@ -14916,6 +16430,62 @@ const jsContent = `(function() {
     }
   }
   const strings = {
+    explanation: "説明",
+    backgroundProcessingHelp: "キャラ以外（背景や、写り込んだ隣のキャラ）を透明か白にします。手で追加した領域には効きません。",
+    autoSegmentHelp: "白か透明の背景で区切られた絵ごとに、領域を自動で作ります。今ある領域は置き換わります。",
+    exclusion: "除外シード",
+    exclusionWhiteOnly: "除外シードは白背景の画像でだけ使えます",
+    exclusionNeedsProcessing: "除外シードの効果は、背景処理を「透明」か「白」にすると表示されます",
+    alreadyBackground: "ここはすでに背景です",
+    backgroundProcessing: "背景処理",
+    backgroundProcessingOptions: {
+      none: "なし",
+      transparent: "透明",
+      white: "白"
+    },
+    manualRegionNote: "手で描いた領域は矩形のまま出力します",
+    emptyMask: "中身が空です",
+    jsonInvalid: "領域JSONの形式または値が正しくありません。",
+    emptyRegionNotice: (names) => \`\${names.length}件の領域は中身が空です：\${names.slice(0, 3).join("、")}\${names.length > 3 ? \`、ほか\${names.length - 3}件\` : ""}\`,
+    character: "領域シード",
+    autoSegment: "自動指定",
+    segmentationSettings: "自動切り出しの設定",
+    background: "背景",
+    backgrounds: { auto: "自動", transparent: "透明", white: "白" },
+    whiteTolerance: "白の許容差",
+    padding: "Padding",
+    minSize: "最小サイズ",
+    mergeContained: "内側の小さな塊をまとめる",
+    segmenting: "キャラクターを解析しています…",
+    segmentFailed: "キャラクターの解析に失敗しました。",
+    clickCharacter: "領域シードはキャラクターの上をクリックしてください",
+    selectSeedRegion: "シードを追加する領域を1つ選択してください",
+    alreadyIncluded: "すでにこの領域に含まれています",
+    lastSeedRemoved: (name) => \`最後のシードを削除したため、領域「\${name}」を削除しました\`,
+    absorbedRegions: (names) => names.length === 1 ? \`「\${names[0]}」を統合しました\` : \`\${names.length}件の領域を統合しました\`,
+    componentExists: "この塊はすでに領域があります",
+    noCharacters: "キャラクターが見つかりませんでした",
+    tooManyComponents: (n) => \`塊が多すぎます（\${n}件）。最小サイズを大きくしてください\`,
+    replaceRegions: (n) => \`既存の\${n}件の領域を、自動指定の結果で置き換えますか？\`,
+    replace: "置き換える",
+    backgroundResult: (kind, tolerance) => kind === "transparent" ? "背景：透明" : \`背景：白（許容差\${tolerance}）\`,
+    segmented: (n, kind, excluded) => \`\${n}件の領域を作りました（背景：\${kind === "transparent" ? "透明" : "白"}）\` + (excluded ? \`（\${excluded}件の小さな塊を除外）\` : ""),
+    loading: "読み込んでいます…",
+    selectedCount: (count) => \`\${count}件選択中\`,
+    merge: "統合",
+    delete: "削除",
+    duplicate: "複製",
+    name: "名前",
+    moveUp: "上へ",
+    moveDown: "下へ",
+    emptyRegions: "まだ領域がありません",
+    drawHint: "ツールバーの「領域を追加」を選び、画像上をドラッグしてください。",
+    undo: "元に戻す",
+    redo: "やり直す",
+    undoTitle: "元に戻す (Ctrl+Z)",
+    redoTitle: "やり直す (Ctrl+Shift+Z / Ctrl+Y)",
+    editorTools: "編集ツール",
+    canvas: "画像編集キャンバス",
     licenses: "ライセンス",
     closeDialog: "閉じる",
     licenseDevelopment: "開発サーバーではライセンス一覧を生成しません。npm run buildで同梱OSSのライセンス全文を含むHTMLを生成してください。",
@@ -14963,9 +16533,8 @@ const jsContent = `(function() {
     noImage: "画像を読み込むと編集を始められます",
     regions: "切り出し領域",
     export: "書き出し",
-    addRegion: "領域を描画",
-    select: "選択・編集",
-    pan: "パン",
+    addRegion: "領域を追加",
+    select: "選択",
     fit: "全体表示",
     actual: "100%",
     removeImage: "画像を閉じる",
@@ -15192,13 +16761,15 @@ const jsContent = `(function() {
         description: opaque ? "8-bit Grayscale" : "8-bit Grayscale + Alpha"
       });
     }
-    candidates.push({
-      colorType: opaque ? 2 : 6,
-      bitDepth: 8,
-      rows: byteRows(rgba, width, height, opaque ? [0, 1, 2] : [0, 1, 2, 3]),
-      bytesPerPixel: opaque ? 3 : 4,
-      description: opaque ? "24-bit RGB" : "32-bit RGBA"
-    });
+    if (!palette) {
+      candidates.push({
+        colorType: opaque ? 2 : 6,
+        bitDepth: 8,
+        rows: byteRows(rgba, width, height, opaque ? [0, 1, 2] : [0, 1, 2, 3]),
+        bytesPerPixel: opaque ? 3 : 4,
+        description: opaque ? "24-bit RGB" : "32-bit RGBA"
+      });
+    }
     return candidates.map(
       (candidate) => encodeCandidate(candidate, width, height)
     );
@@ -15378,6 +16949,7 @@ const jsContent = `(function() {
   }
   const context = self;
   const images = /* @__PURE__ */ new Map();
+  const masks = /* @__PURE__ */ new Map();
   const cancelled = /* @__PURE__ */ new Set();
   function post(response, transfer = []) {
     context.postMessage(response, transfer);
@@ -15465,18 +17037,33 @@ const jsContent = `(function() {
           "missing image"
         );
       const files = [];
+      const emptyRegionIds = [];
+      const mode = request.options.backgroundProcessing ?? "none";
+      const background = mode !== "none" && request.regions.some((r) => r.seeds?.length) ? await effectiveBackground(
+        request.imageId,
+        request.segmentation ?? defaultSegmentationOptions,
+        request.exclusionSeeds ?? [],
+        request.requestId
+      ) : null;
       const usedNames = /* @__PURE__ */ new Set();
       for (let index = 0; index < request.regions.length; index += 1) {
         assertActive(request.requestId);
         const region = request.regions[index];
         if (region.width <= 0 || region.height <= 0)
           throw new Error("INVALID_REGION");
-        const rgba = cropRgba(
+        const cropped = cropRgba(
           image.rgba,
           image.metadata.width,
           image.metadata.height,
           region
         );
+        const mask = background && region.seeds?.length ? await runSteps(
+          regionMaskSteps(background.mask, image.metadata.width, region),
+          request.requestId,
+          0
+        ) : void 0;
+        if (mask && !mask.some(Boolean)) emptyRegionIds.push(region.id);
+        const rgba = transformMaskedRgba(cropped, mask, mode);
         const format = resolveOutputFormat(
           request.options.format,
           image.metadata.source
@@ -15529,6 +17116,7 @@ const jsContent = `(function() {
           requestId: request.requestId,
           operation: "export-regions",
           files,
+          emptyRegionIds,
           archive
         },
         transfer
@@ -15539,6 +17127,227 @@ const jsContent = `(function() {
         request.requestId,
         detail === "CANCELLED" ? "CANCELLED" : detail === "INVALID_REGION" ? "INVALID_REGION" : "EXPORT_FAILED",
         detail === "CANCELLED" ? strings.exportCancelled : strings.exportFailed,
+        error
+      );
+    } finally {
+      cancelled.delete(request.requestId);
+    }
+  }
+  async function runSteps(steps, requestId, progress, silent = false) {
+    let deadline = performance.now() + 12;
+    let step = steps.next();
+    while (!step.done) {
+      if (performance.now() >= deadline) {
+        if (!silent)
+          post({
+            type: "progress",
+            requestId,
+            progress,
+            message: strings.segmenting
+          });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assertActive(requestId);
+        deadline = performance.now() + 12;
+      }
+      step = steps.next();
+    }
+    assertActive(requestId);
+    return step.value;
+  }
+  async function effectiveBackground(imageId, options, seeds, requestId, silent = false) {
+    const image = images.get(imageId);
+    if (!image) throw new Error("IMAGE_NOT_FOUND");
+    const { width, height } = image.metadata;
+    const key = \`\${options.background}:\${options.whiteTolerance}:\${JSON.stringify(seeds)}\`;
+    let cache = masks.get(imageId);
+    if (!cache) {
+      cache = /* @__PURE__ */ new Map();
+      masks.set(imageId, cache);
+    }
+    let result = cache.get(key);
+    if (!result) {
+      result = await runSteps(
+        backgroundMask(image.rgba, width, height, options),
+        requestId,
+        0.1,
+        silent
+      );
+      result = {
+        ...result,
+        mask: await runSteps(
+          exclusionSteps(
+            image.rgba,
+            width,
+            result.mask,
+            result.background,
+            options.whiteTolerance,
+            seeds
+          ),
+          requestId,
+          0.1,
+          silent
+        )
+      };
+      if (images.get(imageId) !== image) throw new Error("CANCELLED");
+      const capacity = Math.max(
+        1,
+        Math.min(4, Math.floor(128 * 1024 * 1024 / result.mask.byteLength))
+      );
+      while (cache.size >= capacity) cache.delete(cache.keys().next().value);
+      cache.set(key, result);
+    }
+    return result;
+  }
+  async function maskOperation(request) {
+    try {
+      const image = images.get(request.imageId);
+      if (!image) throw new Error("IMAGE_NOT_FOUND");
+      const { width, height } = image.metadata;
+      const result = await effectiveBackground(
+        request.imageId,
+        request.options,
+        request.exclusionSeeds,
+        request.requestId,
+        true
+      );
+      if (request.type === "exclusion-point") {
+        const p = request.point;
+        post({
+          type: "success",
+          operation: request.type,
+          requestId: request.requestId,
+          background: result.background,
+          alreadyBackground: !validPoint(p, width, height) || !!result.mask[p.y * width + p.x]
+        });
+      } else {
+        const mask = await runSteps(
+          regionMaskSteps(result.mask, width, request.region),
+          request.requestId,
+          0,
+          true
+        );
+        const rgba = await runSteps(
+          maskPreviewPixels(mask),
+          request.requestId,
+          0,
+          true
+        );
+        const canvas = new OffscreenCanvas(
+          request.region.width,
+          request.region.height
+        );
+        canvas.getContext("2d").putImageData(
+          new ImageData(rgba, request.region.width, request.region.height),
+          0,
+          0
+        );
+        const preview = canvas.transferToImageBitmap();
+        post(
+          {
+            type: "success",
+            operation: request.type,
+            requestId: request.requestId,
+            preview,
+            empty: !mask.some(Boolean)
+          },
+          [preview]
+        );
+      }
+    } catch (error) {
+      failure(request.requestId, "SEGMENT_FAILED", strings.segmentFailed, error);
+    } finally {
+      cancelled.delete(request.requestId);
+    }
+  }
+  async function segment(request) {
+    try {
+      const image = images.get(request.imageId);
+      if (!image)
+        return failure(
+          request.requestId,
+          "IMAGE_NOT_FOUND",
+          strings.missingImage,
+          "missing image"
+        );
+      const { width, height } = image.metadata;
+      const result = await effectiveBackground(
+        request.imageId,
+        request.options,
+        request.exclusionSeeds ?? [],
+        request.requestId
+      );
+      if (request.type === "segment-auto") {
+        const components = await runSteps(
+          analyzeComponents(
+            result.mask,
+            width,
+            image.rgba,
+            result.background,
+            request.options.whiteTolerance
+          ),
+          request.requestId,
+          0.5
+        );
+        post({
+          type: "success",
+          operation: request.type,
+          requestId: request.requestId,
+          components,
+          background: result.background
+        });
+      } else {
+        const { x: x2, y } = request.point;
+        if (!Number.isInteger(x2) || !Number.isInteger(y) || x2 < 0 || y < 0 || x2 >= width || y >= height || result.mask[y * width + x2])
+          return post({
+            type: "failure",
+            requestId: request.requestId,
+            code: "SEGMENT_BACKGROUND",
+            userMessage: strings.clickCharacter,
+            detail: "background",
+            background: result.background
+          });
+        const work = result.mask.slice();
+        const c = await runSteps(
+          componentSteps(work, width, y * width + x2),
+          request.requestId,
+          0.5
+        );
+        const existing = request.existingSeeds.filter(
+          ({ seed }) => Number.isInteger(seed.x) && Number.isInteger(seed.y) && seed.x >= 0 && seed.y >= 0 && seed.x < width && seed.y < height && work[seed.y * width + seed.x] === 3
+        );
+        post({
+          type: "success",
+          operation: request.type,
+          requestId: request.requestId,
+          seed: await runSteps(
+            representativeSeedSteps(
+              work,
+              width,
+              c.bounds,
+              image.rgba,
+              result.background,
+              request.options.whiteTolerance
+            ),
+            request.requestId,
+            0.5
+          ),
+          clickedWhite: isWhiteSeed(
+            image.rgba,
+            y * width + x2,
+            result.background,
+            request.options.whiteTolerance
+          ),
+          bounds: c.bounds,
+          background: result.background,
+          existingRegionIds: [...new Set(existing.map((s) => s.regionId))]
+        });
+      }
+    } catch (error) {
+      const isCancelled = error instanceof Error && error.message === "CANCELLED";
+      failure(
+        request.requestId,
+        isCancelled ? "CANCELLED" : "SEGMENT_FAILED",
+        isCancelled ? strings.cancelled : strings.segmentFailed,
         error
       );
     } finally {
@@ -15556,6 +17365,7 @@ const jsContent = `(function() {
       });
     } else if (request.type === "release-image") {
       images.delete(request.imageId);
+      masks.delete(request.imageId);
       post({
         type: "success",
         requestId: request.requestId,
@@ -15563,6 +17373,10 @@ const jsContent = `(function() {
       });
     } else if (request.type === "load-image") {
       void load(request);
+    } else if (request.type === "segment-point" || request.type === "segment-auto") {
+      void segment(request);
+    } else if (request.type === "region-mask-preview" || request.type === "exclusion-point") {
+      void maskOperation(request);
     } else {
       void exportRegions(request);
     }
@@ -15652,10 +17466,37 @@ function App() {
   const jsonInputRef = reactExports.useRef(null);
   const [notice, setNotice] = reactExports.useState(null);
   const [exporting, setExporting] = reactExports.useState(false);
+  const replaceDialogRef = reactExports.useRef(null);
+  const [backgroundResult, setBackgroundResult] = reactExports.useState(null);
+  const busy = state.status === "loading" || state.progress !== null;
   reactExports.useEffect(() => {
     clientRef.current = new ImageWorkerClient();
     return () => clientRef.current?.dispose();
   }, []);
+  reactExports.useEffect(() => {
+    const keydown = (event) => {
+      if (event.key === "Escape") {
+        if (isInputTarget(event.target) || document.querySelector("dialog:modal"))
+          return;
+        dispatch({ type: "CLEAR_SELECTION" });
+        return;
+      }
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "g") {
+        event.preventDefault();
+        dispatch({ type: "MERGE_REGIONS", newId: createRegionId() });
+        return;
+      }
+      if (isInputTarget(event.target)) return;
+      if (key === "z" || key === "y") {
+        event.preventDefault();
+        dispatch({ type: key === "y" || event.shiftKey ? "REDO" : "UNDO" });
+      }
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, [dispatch]);
   const showNotice = (message) => {
     setNotice(message);
     window.setTimeout(
@@ -15718,7 +17559,7 @@ function App() {
     dispatch({ type: "CLEAR_IMAGE" });
   };
   const exportRegions = async () => {
-    if (!state.image || !clientRef.current || state.regions.length === 0)
+    if (busy || activeRequestRef.current || !state.image || !clientRef.current || state.document.regions.length === 0)
       return;
     setExporting(true);
     const requestId = crypto.randomUUID();
@@ -15734,15 +17575,22 @@ function App() {
           type: "export-regions",
           requestId,
           imageId: state.image.id,
-          regions: state.regions,
-          options: state.exportOptions
+          regions: state.document.regions,
+          options: state.exportOptions,
+          segmentation: state.segmentationOptions,
+          exclusionSeeds: state.document.exclusionSeeds
         },
         (value, message) => dispatch({ type: "SET_PROGRESS", value, message })
       );
+      const emptyNotice = response.emptyRegionIds.length ? " " + strings.emptyRegionNotice(
+        state.document.regions.filter((r) => response.emptyRegionIds.includes(r.id)).map((r) => r.name)
+      ) : "";
       if (response.files.length === 1) {
         const file = response.files[0];
         download(file.data, file.name, file.mimeType);
-        showNotice(strings.savedFile(file.name, file.description));
+        showNotice(
+          strings.savedFile(file.name, file.description) + emptyNotice
+        );
       } else {
         if (!response.archive) throw new Error(strings.zipFailed);
         download(
@@ -15750,7 +17598,7 @@ function App() {
           `${baseName(state.image.fileName)}_regions.zip`,
           "application/zip"
         );
-        showNotice(strings.savedArchive(response.files.length));
+        showNotice(strings.savedArchive(response.files.length) + emptyNotice);
       }
     } catch (error) {
       showNotice(error instanceof Error ? error.message : strings.exportFailed);
@@ -15760,10 +17608,194 @@ function App() {
       dispatch({ type: "CLEAR_PROGRESS" });
     }
   };
+  const segmentImage = async (point, shift = false) => {
+    const image = state.image, client2 = clientRef.current;
+    if (!image || !client2 || busy || activeRequestRef.current) return;
+    if (point && shift && state.selectedRegionIds.length !== 1) {
+      showNotice(strings.selectSeedRegion);
+      return;
+    }
+    dispatch({ type: "COMMIT" });
+    const requestId = crypto.randomUUID();
+    activeRequestRef.current = requestId;
+    dispatch({ type: "SET_PROGRESS", value: 0, message: strings.segmenting });
+    const options = state.segmentationOptions;
+    try {
+      if (point) {
+        const response = await client2.request(
+          {
+            type: "segment-point",
+            requestId,
+            imageId: image.id,
+            point,
+            options,
+            exclusionSeeds: state.document.exclusionSeeds,
+            existingSeeds: state.document.regions.flatMap(
+              (r) => (r.seeds ?? []).map((seed) => ({ regionId: r.id, seed }))
+            )
+          },
+          (value, message) => dispatch({ type: "SET_PROGRESS", value, message })
+        );
+        if (activeRequestRef.current !== requestId) return;
+        setBackgroundResult({
+          imageId: image.id,
+          kind: response.background,
+          tolerance: options.whiteTolerance
+        });
+        const existing = state.document.regions.filter(
+          (r) => response.existingRegionIds.includes(r.id)
+        );
+        if (shift) {
+          const id = state.selectedRegionIds[0];
+          if (response.existingRegionIds.includes(id))
+            showNotice(strings.alreadyIncluded);
+          else if (existing.length) {
+            dispatch({
+              type: "ABSORB_REGIONS",
+              id,
+              ids: existing.map((r) => r.id)
+            });
+            showNotice(strings.absorbedRegions(existing.map((r) => r.name)));
+          } else
+            dispatch({
+              type: "ADD_REGION_SEED",
+              id,
+              seed: characterSeeds(
+                point,
+                response.seed,
+                response.clickedWhite
+              )[0],
+              bounds: response.bounds,
+              padding: options.padding
+            });
+        } else if (existing.length) {
+          dispatch({ type: "SELECT_REGION", id: existing[0].id });
+          showNotice(strings.componentExists);
+        } else
+          dispatch({
+            type: "ADD_REGION",
+            region: {
+              ...padBounds(response.bounds, options.padding, image),
+              id: createRegionId(),
+              name: nextRegionName(
+                state.document.regions,
+                baseName(image.fileName)
+              ),
+              seeds: characterSeeds(
+                point,
+                response.seed,
+                response.clickedWhite
+              )
+            }
+          });
+      } else {
+        const response = await client2.request(
+          {
+            type: "segment-auto",
+            requestId,
+            imageId: image.id,
+            options,
+            exclusionSeeds: state.document.exclusionSeeds
+          },
+          (value, message) => dispatch({ type: "SET_PROGRESS", value, message })
+        );
+        if (activeRequestRef.current !== requestId) return;
+        setBackgroundResult({
+          imageId: image.id,
+          kind: response.background,
+          tolerance: options.whiteTolerance
+        });
+        const result = autoRegions(response.components, options, image);
+        if (result.tooMany) showNotice(strings.tooManyComponents(result.count));
+        else if (!result.count) showNotice(strings.noCharacters);
+        else {
+          dispatch({
+            type: "REPLACE_REGIONS",
+            regions: result.regions.map((r, i) => ({
+              ...r,
+              id: createRegionId(),
+              name: `${baseName(image.fileName)}_${String(i + 1).padStart(3, "0")}`
+            }))
+          });
+          showNotice(
+            strings.segmented(
+              result.count,
+              response.background,
+              result.excluded
+            )
+          );
+        }
+      }
+    } catch (error) {
+      if (activeRequestRef.current === requestId) {
+        const failure = error instanceof Error ? error.cause : void 0;
+        if (failure?.code === "SEGMENT_BACKGROUND" && failure.background)
+          setBackgroundResult({
+            imageId: image.id,
+            kind: failure.background,
+            tolerance: options.whiteTolerance
+          });
+        showNotice(
+          error instanceof Error ? error.message : strings.segmentFailed
+        );
+      }
+    } finally {
+      if (activeRequestRef.current === requestId) {
+        activeRequestRef.current = null;
+        dispatch({ type: "CLEAR_PROGRESS" });
+      }
+    }
+  };
+  const excludePoint = async (point) => {
+    const client2 = clientRef.current, image = state.image;
+    if (!client2 || !image || busy || activeRequestRef.current) return;
+    const requestId = crypto.randomUUID();
+    activeRequestRef.current = requestId;
+    dispatch({ type: "SET_PROGRESS", value: 0, message: strings.segmenting });
+    try {
+      const response = await client2.request({
+        type: "exclusion-point",
+        requestId,
+        imageId: image.id,
+        point,
+        options: state.segmentationOptions,
+        exclusionSeeds: state.document.exclusionSeeds
+      });
+      if (response.background !== "white")
+        showNotice(strings.exclusionWhiteOnly);
+      else if (response.alreadyBackground)
+        showNotice(strings.alreadyBackground);
+      else {
+        dispatch({
+          type: "SET_EXCLUSION_SEEDS",
+          seeds: [...state.document.exclusionSeeds, point]
+        });
+        if (state.exportOptions.backgroundProcessing === "none")
+          showNotice(strings.exclusionNeedsProcessing);
+      }
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : strings.segmentFailed
+      );
+    } finally {
+      activeRequestRef.current = null;
+      dispatch({ type: "CLEAR_PROGRESS" });
+    }
+  };
+  const requestAutoSegment = () => {
+    if (busy) return;
+    if (state.document.regions.length) replaceDialogRef.current?.showModal();
+    else void segmentImage();
+  };
   const saveJson = () => {
     if (!state.image) return;
     download(
-      serializeRegions(state.image, state.regions),
+      serializeRegions(
+        state.image,
+        state.document.regions,
+        state.segmentationOptions,
+        state.document.exclusionSeeds
+      ),
       `${baseName(state.image.fileName)}_regions.json`,
       "application/json"
     );
@@ -15776,11 +17808,17 @@ function App() {
         throw new Error(strings.jsonSizeMismatch);
       dispatch({
         type: "REPLACE_REGIONS",
+        exclusionSeeds: document2.exclusionSeeds,
         regions: document2.regions.map((region) => ({
           ...region,
           id: createRegionId()
         }))
       });
+      if (document2.segmentation)
+        dispatch({
+          type: "SET_SEGMENTATION_OPTIONS",
+          changes: document2.segmentation
+        });
       showNotice(strings.loadedRegions(document2.regions.length));
     } catch (error) {
       showNotice(
@@ -15795,13 +17833,22 @@ function App() {
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "brand", children: /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: strings.appName }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "header-actions", children: [
         state.image && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(FileDropZone, { compact: true, onFile: loadFile, onError: showNotice }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            FileDropZone,
+            {
+              compact: true,
+              disabled: busy,
+              onFile: loadFile,
+              onError: showNotice
+            }
+          ),
           /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "button ghost", type: "button", onClick: saveJson, children: strings.saveJson }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
               className: "button ghost",
               type: "button",
+              disabled: busy,
               onClick: () => jsonInputRef.current?.click(),
               children: strings.loadJson
             }
@@ -15824,6 +17871,7 @@ function App() {
             {
               className: "button ghost",
               type: "button",
+              disabled: busy,
               onClick: clearImage,
               children: strings.removeImage
             }
@@ -15841,8 +17889,33 @@ function App() {
         onError: (message) => dispatch({ type: "LOAD_FAILURE", error: message })
       }
     ) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("aside", { className: "left-sidebar", children: /* @__PURE__ */ jsxRuntimeExports.jsx(RegionList, {}) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(ImageCanvas, {}),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "left-sidebar", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          SegmentationSettings,
+          {
+            result: backgroundResult?.imageId === state.image.id ? strings.backgroundResult(
+              backgroundResult.kind,
+              backgroundResult.tolerance
+            ) : null
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(RegionList, {})
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        ImageCanvas,
+        {
+          client: clientRef.current,
+          onExcludePoint: (point) => void excludePoint(point),
+          onSegmentPoint: (point, shift) => void segmentImage(point, shift),
+          onRemoveRegionSeed: (region, seed) => {
+            if (busy || activeRequestRef.current) return;
+            dispatch({ type: "REMOVE_REGION_SEED", id: region.id, seed });
+            if (region.seeds?.length === 1)
+              showNotice(strings.lastSeedRemoved(region.name));
+          },
+          onSegmentAuto: requestAutoSegment
+        }
+      ),
       /* @__PURE__ */ jsxRuntimeExports.jsx("aside", { className: "right-sidebar", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
         ExportPanel,
         {
@@ -15851,6 +17924,33 @@ function App() {
         }
       ) })
     ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "dialog",
+      {
+        ref: replaceDialogRef,
+        className: "license-dialog replace-dialog",
+        "aria-labelledby": "replace-title",
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "replace-title", children: strings.autoSegment }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: strings.replaceRegions(state.document.regions.length) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { method: "dialog", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "button ghost", type: "submit", children: strings.cancel }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "button",
+                type: "submit",
+                onClick: () => {
+                  replaceDialogRef.current?.close();
+                  void segmentImage();
+                },
+                children: strings.replace
+              }
+            )
+          ] })
+        ]
+      }
+    ),
     state.progress && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "progress-toast", role: "status", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: state.progress.message }),
@@ -16183,7 +18283,8 @@ canvas:focus-visible {
   font: 9px "IBM Plex Mono";
 }
 .name-field input,
-.number-field input {
+.number-field input,
+.segmentation-number input {
   width: 100%;
   min-width: 0;
   border: 1px solid #303741;
@@ -16223,9 +18324,10 @@ canvas:focus-visible {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 .canvas-toolbar {
+  min-height: 48px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -16254,11 +18356,6 @@ canvas:focus-visible {
   background: #1b2027;
   color: white;
 }
-.tool-group button.active {
-  border-color: #345464;
-  color: #bcefff;
-  background: #192831;
-}
 .zoom-controls {
   font-family: "IBM Plex Mono";
 }
@@ -16272,7 +18369,7 @@ canvas:focus-visible {
   min-height: 0;
   position: relative;
   overflow: hidden;
-  background: #0b0d10;
+  background: #d4d7dc;
 }
 .canvas-wrap canvas {
   display: block;
@@ -16281,10 +18378,10 @@ canvas:focus-visible {
 .canvas-wrap.tool-create canvas {
   cursor: crosshair;
 }
-.canvas-wrap.tool-pan canvas {
+.canvas-wrap.space-pan canvas {
   cursor: grab;
 }
-.canvas-wrap.tool-pan canvas:active {
+.canvas-wrap.is-panning canvas {
   cursor: grabbing;
 }
 .canvas-status {
@@ -16322,6 +18419,8 @@ canvas:focus-visible {
 }
 .export-panel legend {
   margin-bottom: 8px;
+}
+.field-label {
   color: var(--muted);
   font-size: 10px;
 }
@@ -16349,7 +18448,8 @@ canvas:focus-visible {
   text-align: center;
   font: 10px "IBM Plex Mono";
 }
-.segmented input:checked + span {
+.segmented input:checked + span,
+.tool-segmented button[aria-pressed="true"] {
   color: #0b1114;
   background: var(--accent);
   font-weight: 700;
@@ -16486,6 +18586,179 @@ canvas:focus-visible {
   margin: 18px 0 0;
   color: var(--danger);
   font-size: 12px;
+}
+
+.multi-selection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  flex-wrap: wrap;
+}
+.history-controls {
+  flex-wrap: wrap;
+}
+.canvas-toolbar {
+  flex-wrap: wrap;
+}
+.segmentation-settings {
+  padding: 14px;
+  border-bottom: 1px solid #30353d;
+}
+.segmentation-settings summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+.segmentation-settings:has(> fieldset:disabled) {
+  opacity: 0.45;
+}
+.segmentation-settings fieldset {
+  border: 0;
+  padding: 10px 0;
+  margin: 0;
+  min-width: 0;
+}
+.segmentation-settings legend {
+  padding-top: 12px;
+}
+.segmentation-number {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0;
+}
+.segmentation-number input {
+  width: 80px;
+}
+.segmentation-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.segmentation-checkbox input {
+  margin: 0;
+}
+.segmentation-settings small {
+  display: block;
+}
+.replace-dialog {
+  max-width: 480px;
+}
+.replace-dialog form {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.tool-character,
+.tool-exclude {
+  cursor: crosshair;
+}
+.canvas-toolbar {
+  flex-wrap: wrap;
+}
+
+/* Tool icons are original inline SVGs, sized independently of text labels. */
+button svg,
+summary svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  vertical-align: middle;
+}
+.segmentation-settings summary svg {
+  margin-right: 6px;
+}
+.tooltip-anchor {
+  display: inline-flex;
+  align-items: center;
+}
+.help-tooltip {
+  position: fixed;
+  z-index: 100;
+  width: max-content;
+  max-width: min(240px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid #596575;
+  border-radius: 6px;
+  background: #202630;
+  color: #f2f5f9;
+  box-shadow: 0 4px 18px #0006;
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+button.help-button {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 3px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  background: transparent;
+  cursor: help;
+}
+button.help-button:hover {
+  color: white;
+  background: #303945;
+}
+.export-panel legend .tooltip-anchor {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.canvas-toolbar {
+  gap: 6px;
+  padding-inline: 8px;
+  justify-content: flex-start;
+}
+.tool-group {
+  flex-shrink: 0;
+  gap: 2px;
+}
+.tool-group button {
+  padding-inline: 6px;
+}
+.tool-segmented {
+  grid-template-columns: repeat(4, auto);
+  gap: 3px;
+  /* The 40px frame fits in the toolbar's existing vertical padding. */
+  margin-block: -4px;
+}
+.tool-segmented button {
+  border-radius: 3px;
+}
+.auto-controls {
+  border-left: 1px solid #45505e;
+  padding-left: 7px;
+}
+.tool-group .auto-button {
+  color: #071114;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  font-weight: 700;
+}
+.tool-group .auto-button:hover {
+  color: #071114;
+  filter: brightness(1.1);
+}
+.tool-group .icon-button {
+  width: 30px;
+  padding: 6px;
+  display: grid;
+  place-items: center;
+}
+.history-controls {
+  flex-wrap: nowrap;
+}
+.zoom-controls {
+  margin-left: auto;
+}
+.zoom-controls span {
+  min-width: 36px;
 }
 
 </style>

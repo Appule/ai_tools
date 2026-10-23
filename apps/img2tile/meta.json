@@ -1,11 +1,11 @@
 {
   "id": "img2tile",
   "name": "画像切り出しツール",
-  "shortDescription": "TGA / PNG / JPG画像から複数の矩形領域を指定し、PNG / TGAへ可逆に切り出します。透明画素のRGBも保持し、最小サイズの形式を自動で選びます。",
-  "tags": ["素材", "切り出し", "TGA", "PNG"],
-  "searchKeywords": ["crop", "slice", "tile", "sprite", "tga", "png", "jpg"],
+  "shortDescription": "TGA / PNG / JPG画像から複数の領域を指定し、PNG / TGAへ可逆に切り出します。白背景・透明背景のキャラクター設定シートなどは、キャラクターごとの領域を自動で作り、背景を透明か白にして書き出せます。",
+  "tags": ["素材", "切り出し", "キャラ設定", "TGA", "PNG"],
+  "searchKeywords": ["crop", "slice", "tile", "sprite", "tga", "png", "jpg", "auto", "segmentation", "mask", "transparent background", "character sheet", "model sheet"],
   "aiInfo": { "model": "Claude Code", "version": "Opus 5.5" },
-  "manual": "1. TGA / PNG / JPG画像をドロップ、またはクリックして選択します。<br>2. 「領域を描画」を選び、画像上をドラッグして切り出す範囲を指定します（複数可）。<br>3. 左パネルで名前と座標を調整します。<br>4. 出力形式（既定は「元の形式」。JPGはPNGで保存）を選び「領域を書き出す」を押します。複数ファイルはZIPで保存されます。<br>5. 領域はJSONで保存・再読込できます。",
+  "manual": "1. TGA / PNG / JPG画像をドロップ、またはクリックして選択します。<br>2. 切り出す範囲を指定します。<br>・「領域を追加 (R)」：画像上をドラッグして矩形を描きます。<br>・「領域シード (S)」：キャラクターをクリックすると、そのキャラクターを囲む領域を作ります。<br>・「自動指定」：白か透明の背景で区切られた絵ごとに、領域をまとめて作ります。<br>3. 「選択 (V)」で領域を移動・リサイズします。複数選択してCtrl+Gで統合できます。<br>4. 書き出しパネルで形式と背景処理（なし / 透明 / 白）を選び、「領域を書き出す」を押します。複数ファイルはZIPで保存されます。<br>5. 領域はJSONで保存・再読込できます。",
   "author": "Naruya Ninomiya",
   "promptLicense": "CC BY 4.0",
   "referenceArticles": [
