@@ -144,6 +144,12 @@
 </div>
 
 <script>
+    function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+        }[ch]));
+    }
+
     window.onerror = function(msg, url, lineNo, columnNo, error) {
         document.getElementById('log').textContent += `\n❌ [システムエラー発生]\n内容: ${msg}\n行番号: ${lineNo}`;
         document.getElementById('status').textContent = "❌ エラーで停止しました";
@@ -244,7 +250,7 @@
                             <button class="icon-btn" onclick="moveItem('genga', ${i}, -1)" ${i === 0 ? 'disabled' : ''}>▲</button>
                             <button class="icon-btn" onclick="moveItem('genga', ${i}, 1)" ${i === gengaFilesList.length - 1 ? 'disabled' : ''}>▼</button>
                         </div>
-                        <span>${gengaFilesList[i].name}</span>
+                        <span>${escapeHtml(gengaFilesList[i].name)}</span>
                     </div>
                 `;
             }
@@ -257,7 +263,7 @@
                             <button class="icon-btn" onclick="moveItem('douga', ${i}, -1)" ${i === 0 ? 'disabled' : ''}>▲</button>
                             <button class="icon-btn" onclick="moveItem('douga', ${i}, 1)" ${i === dougaFilesList.length - 1 ? 'disabled' : ''}>▼</button>
                         </div>
-                        <span>${dougaFilesList[i].name}</span>
+                        <span>${escapeHtml(dougaFilesList[i].name)}</span>
                     </div>
                 `;
             }
@@ -676,7 +682,7 @@
                                 tableRowsHTML.push(`
                                     <tr>
                                         <td colspan="5" style="background:#e8f4f8; color:#2c3e50; font-weight:bold; font-size:0.95rem; padding:6px; border-bottom: 2px solid #3498db; text-align:left; border-left: 5px solid #2980b9;">
-                                            📄 ${fileNameStr}
+                                            📄 ${escapeHtml(fileNameStr)}
                                         </td>
                                     </tr>
                                 `);
@@ -687,7 +693,7 @@
                         if (row.block.parent === lastDisplayedParentString) {
                             parentCellTD = `<td class="slip-arrow">↓</td>`;
                         } else {
-                            parentCellTD = `<td class="slip-parent">${row.block.parent}</td>`;
+                            parentCellTD = `<td class="slip-parent">${escapeHtml(row.block.parent)}</td>`;
                             lastDisplayedParentString = row.block.parent;
                         }
 
@@ -708,9 +714,9 @@
                             <tr>
                                 ${parentCellTD}
                                 <td>＋</td>
-                                <td class="slip-child">${trackName} <span>${formattedChildVal}</span>${endLabel}</td>
+                                <td class="slip-child">${escapeHtml(trackName)} <span>${escapeHtml(formattedChildVal)}</span>${endLabel}</td>
                                 <td>＝</td>
-                                <td class="slip-result">${trackName} <span>${formattedChildVal}</span>${endLabel}</td>
+                                <td class="slip-result">${escapeHtml(trackName)} <span>${escapeHtml(formattedChildVal)}</span>${endLabel}</td>
                             </tr>
                         `);
                     });
@@ -719,7 +725,7 @@
                         const groupDiv = document.createElement('div');
                         groupDiv.className = "slip-folder-group";
                         groupDiv.innerHTML = `
-                            <div class="slip-folder-title">■ ${trackName} セル 伝票形式</div>
+                            <div class="slip-folder-title">■ ${escapeHtml(trackName)} セル 伝票形式</div>
                             <table class="slip-table">
                                 <thead>
                                     <tr>

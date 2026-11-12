@@ -430,7 +430,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     </section>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
   <script>
     (() => {
       'use strict';
@@ -930,7 +930,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
           const receipt = makeReceipt(zipName, blob.size, hash);
           receiptBox.value = receipt;
-          showStatus('good', `<span>OK</span><div><strong>${zipName}</strong> created (${formatBytes(blob.size)}). ${hash ? 'SHA-256 receipt generated.' : 'Hash skipped.'}</div>`);
+          showStatus('good', `<span>OK</span><div><strong>${escapeHtml(zipName)}</strong> created (${formatBytes(blob.size)}). ${hash ? 'SHA-256 receipt generated.' : 'Hash skipped.'}</div>`);
           setProgress(100, 'ZIP ready.');
         } catch (error) {
           console.error(error);
