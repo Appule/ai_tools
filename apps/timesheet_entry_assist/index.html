@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <title>Toei TS Editor Ver.5.00.0 (Pure JSON-XDTS) - Cut & Page Manager</title>
     
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.css"/>
-    <script src="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.js.iife.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.css" integrity="sha384-bovbcpDBo0pTIhd7ws6ebPh1PG31ubAHcX2pv8Tcu5EtFHNl5FBciYFtS/e2SN66" crossorigin="anonymous"/>
+    <script src="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.js.iife.js" integrity="sha384-yPK823YWGKpXfBT8wLqUXmrB5ejcI7sgGBIary/01UavNc1bD92AOUBCBzjXQS/s" crossorigin="anonymous"></script>
 
     <style>
         :root {
@@ -232,6 +232,12 @@
 </div>
 
 <script>
+    function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+        }[ch]));
+    }
+
     // データ構造 (各カットに一意のIDを割り振ります)
     let cuts = [{ id: "cut_init", name: "Cut001", sec: 6, koma: 0 }];
     let activeCutIndex = 0;
@@ -341,7 +347,7 @@
         cuts.forEach((cut, cIdx) => {
             const cutDiv = document.createElement('div');
             cutDiv.className = `cut-item ${cIdx === activeCutIndex ? 'active' : ''}`;
-            cutDiv.innerHTML = `<span>${cut.name}</span><span style="font-size:9px;opacity:0.8">${cut.sec}+${cut.koma}</span>`;
+            cutDiv.innerHTML = `<span>${escapeHtml(cut.name)}</span><span style="font-size:9px;opacity:0.8">${escapeHtml(cut.sec)}+${escapeHtml(cut.koma)}</span>`;
             cutDiv.onclick = () => {
                 activeCutIndex = cIdx;
                 syncInputsToActiveCut();

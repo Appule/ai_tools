@@ -107,7 +107,7 @@ SOFTWARE.
         .check-warn { background: #fee2e2; color: #b91c1c; border-left: 5px solid #ef4444; }
         .check-minor-warn { background: #fef9c3; color: #713f12; border-left: 5px solid #eab308; } /* 黄色警告 */
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js" integrity="sha384-KsfptB549CXfbfsdxZmPo2PlmgCyJ+RNqHTQE1Gj45t3p4DaA1QbZYVyqlni4pOO" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -160,6 +160,12 @@ SOFTWARE.
     </div>
 
     <script>
+        function escapeHtml(value) {
+            return String(value).replace(/[&<>"']/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+            }[ch]));
+        }
+
         let SQL = null;
         let fileHandle = null; 
         
@@ -177,16 +183,23 @@ SOFTWARE.
         const filePathText = document.getElementById('file-path-text');
         const statusDiv = document.getElementById('status');
 
-        initSqlJs({
-            locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
-        }).then(sql => {
-            SQL = sql;
-            statusDiv.innerText = "準備完了：CLIPファイルをドロップしてください。";
-            statusDiv.className = "status success";
-        }).catch(err => {
-            statusDiv.innerText = "SQL.js の初期化に失敗しました: " + err.message;
-            statusDiv.className = "status error";
-        });
+        const SQLJS_WASM_URL = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.wasm';
+        const SQLJS_WASM_INTEGRITY = 'sha384-AS2JK6pQgcjrHesLM8C6EQ0u87+/VcHqKXIPDFVCgQgO2A258+LHg7ID8d66NgPW';
+
+        fetch(SQLJS_WASM_URL, { integrity: SQLJS_WASM_INTEGRITY })
+            .then(res => {
+                if (!res.ok) throw new Error(`wasm の取得に失敗しました (HTTP ${res.status})`);
+                return res.arrayBuffer();
+            })
+            .then(wasmBinary => initSqlJs({ wasmBinary }))
+            .then(sql => {
+                SQL = sql;
+                statusDiv.innerText = "準備完了：CLIPファイルをドロップしてください。";
+                statusDiv.className = "status success";
+            }).catch(err => {
+                statusDiv.innerText = "SQL.js の初期化に失敗しました: " + err.message;
+                statusDiv.className = "status error";
+            });
 
         function triggerRealtimeCheck() {
             if (currentDb) {
@@ -606,8 +619,8 @@ SOFTWARE.
                     let arrowIcon = isCollapsed ? '▶' : '▼';
                     html += `
                         <div class="layer-item ${folderClass}" style="padding-left: ${indent + 10}px; cursor: pointer;" onclick="toggleFolder(this)">
-                            <span class="layer-name"><span class="toggle-arrow">${arrowIcon}</span> ${icon} ${node.name || '(名称未設定)'}${animeCountText}${draftBadge}${hiddenBadge}</span>
-                            <span class="layer-meta">不透明度: ${node.opacityPercent}% <small style="color:#94a3b8; margin-left:10px;">(ID:${node.mainId})</small></span>
+                            <span class="layer-name"><span class="toggle-arrow">${arrowIcon}</span> ${icon} ${escapeHtml(node.name || '(名称未設定)')}${animeCountText}${draftBadge}${hiddenBadge}</span>
+                            <span class="layer-meta">不透明度: ${node.opacityPercent}% <small style="color:#94a3b8; margin-left:10px;">(ID:${escapeHtml(node.mainId)})</small></span>
                         </div>
                         <div class="folder-children" style="display: ${displayStyle};">
                             ${childrenHtml}
@@ -616,8 +629,8 @@ SOFTWARE.
                 } else {
                     html += `
                         <div class="layer-item ${folderClass}" style="padding-left: ${indent + 10}px;">
-                            <span class="layer-name"><span class="toggle-arrow"></span>${icon} ${node.name || '(名称未設定)'}${draftBadge}${hiddenBadge}</span>
-                            <span class="layer-meta">不透明度: ${node.opacityPercent}% <small style="color:#94a3b8; margin-left:10px;">(ID:${node.mainId})</small></span>
+                            <span class="layer-name"><span class="toggle-arrow"></span>${icon} ${escapeHtml(node.name || '(名称未設定)')}${draftBadge}${hiddenBadge}</span>
+                            <span class="layer-meta">不透明度: ${node.opacityPercent}% <small style="color:#94a3b8; margin-left:10px;">(ID:${escapeHtml(node.mainId)})</small></span>
                         </div>
                     `;
                 }
@@ -651,7 +664,7 @@ SOFTWARE.
                 warnings.forEach(warn => {
                     const badgeClass = warn.level === 'red' ? 'check-warn' : 'check-minor-warn';
                     const icon = warn.level === 'red' ? '⚠️' : '💡';
-                    checkResults.innerHTML += `<div class="check-item ${badgeClass}">${icon} ${warn.text}</div>`;
+                    checkResults.innerHTML += `<div class="check-item ${badgeClass}">${icon} ${escapeHtml(warn.text)}</div>`;
                 });
                 
                 // 修正可能な項目（pendingUpdatesMapのタスク）がある場合のみ、保存ボタンをアクティブ化

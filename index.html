@@ -518,6 +518,37 @@
     <script>
         let appsData = [];
 
+        function escapeHtml(value) {
+            return String(value).replace(/[&<>"']/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+            }[ch]));
+        }
+
+        // meta.json の URL を検証する。
+        function safeUrl(raw) {
+            if (typeof raw !== 'string' || raw.trim() === '') return null;
+            let u;
+            try {
+                u = new URL(raw.trim(), window.location.href);
+            } catch (e) {
+                return null;
+            }
+            if (u.protocol === 'http:' || u.protocol === 'https:') return u.href;
+            if (u.protocol === 'file:' && window.location.protocol === 'file:') return u.href;
+            return null;
+        }
+
+        // manual は改行用の <br> のみ許可する。
+        function renderManual(text) {
+            return escapeHtml(text || '').replace(/&lt;br\s*\/?&gt;/gi, '<br>');
+        }
+
+        function renderLink(rawUrl, label) {
+            const url = safeUrl(rawUrl);
+            const text = escapeHtml(label);
+            return url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="link-badge">${text}</a>` : text;
+        }
+
         function initPlatform() {
             if (typeof globalAppsData !== 'undefined') {
                 appsData = globalAppsData;
@@ -622,10 +653,10 @@
                 item.className = 'app-item';
                 if (selectedApp && selectedApp.id === app.id) item.classList.add('active');
 
-                const tagsHtml = app.tags.map(tag => `<span class="tag">${tag}</span>`).join('');
+                const tagsHtml = app.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('');
                 item.innerHTML = `
-                    <h4>${app.name}</h4>
-                    <p>${app.shortDescription.substring(0, 45)}...</p>
+                    <h4>${escapeHtml(app.name)}</h4>
+                    <p>${escapeHtml(app.shortDescription.substring(0, 45))}...</p>
                     <div class="tag-container">${tagsHtml}</div>
                 `;
                 item.addEventListener('click', () => selectApp(app));
@@ -655,16 +686,16 @@
             
             let panelHtml = `
                 <h3 class="info-title">Information</h3>
-                <div class="info-section"><span class="section-label">説明</span><div class="section-body">${app.shortDescription}</div></div>
-                <div class="info-section"><span class="section-label">マニュアル</span><div class="manual-box">${app.manual}</div></div>
+                <div class="info-section"><span class="section-label">説明</span><div class="section-body">${escapeHtml(app.shortDescription)}</div></div>
+                <div class="info-section"><span class="section-label">マニュアル</span><div class="manual-box">${renderManual(app.manual)}</div></div>
             `;
 
             if (app.author) {
-                panelHtml += `<div class="info-section"><span class="section-label">作者</span><div class="section-body">${app.author}</div></div>`;
+                panelHtml += `<div class="info-section"><span class="section-label">作者</span><div class="section-body">${escapeHtml(app.author)}</div></div>`;
             }
 
             if (app.aiInfo && app.aiInfo.model) {
-                panelHtml += `<div class="info-section"><span class="section-label">AIモデル</span><div class="section-body">${app.aiInfo.model} (${app.aiInfo.version || ''})</div></div>`;
+                panelHtml += `<div class="info-section"><span class="section-label">AIモデル</span><div class="section-body">${escapeHtml(app.aiInfo.model)} (${escapeHtml(app.aiInfo.version || '')})</div></div>`;
             }
 
             if (app.promptUrl && app.promptUrl.trim() !== "") {
@@ -672,7 +703,7 @@
                     <div class="info-section">
                         <span class="section-label">プロンプト</span>
                         <div class="section-body">
-                            <a href="${app.promptUrl}" target="_blank" class="link-badge">🔗 プロンプトと対話リンク</a>
+                            ${renderLink(app.promptUrl, '🔗 プロンプトと対話リンク')}
                         </div>
                     </div>
                 `;
@@ -681,7 +712,7 @@
             if (app.referencedOSS && app.referencedOSS.length > 0) {
                 const ossListHtml = app.referencedOSS.map(oss => `
                     <li style="margin-bottom: 4px;">
-                        <a href="${oss.url}" target="_blank" class="link-badge">${oss.name}</a> (${oss.license})
+                        ${renderLink(oss.url, oss.name)} (${escapeHtml(oss.license)})
                     </li>
                 `).join('');
                 
@@ -698,7 +729,7 @@
             if (app.referenceArticles && app.referenceArticles.length > 0) {
                 const articlesListHtml = app.referenceArticles.map(art => `
                     <li style="margin-bottom: 4px;">
-                        <a href="${art.url}" target="_blank" class="link-badge">${art.title}</a>
+                        ${renderLink(art.url, art.title)}
                     </li>
                 `).join('');
                 
@@ -727,15 +758,15 @@
             if (app.promptUrl && app.promptUrl.trim() !== "") {
                 const authorName = app.author ? app.author : 'NameOfLicenser';
                 const rawLicense = app.promptLicense ? app.promptLicense.trim() : '';
-                let licenseLinkHtml = rawLicense;
+                let licenseLinkHtml = escapeHtml(rawLicense);
 
                 if (rawLicense.toUpperCase().includes('CC BY 4.0')) {
-                    licenseLinkHtml = `<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" class="link-badge">Licensed under CC BY 4.0</a>`;
+                    licenseLinkHtml = `<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer" class="link-badge">Licensed under CC BY 4.0</a>`;
                 } else if (rawLicense.toUpperCase().includes('CC0')) {
-                    licenseLinkHtml = `<a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" class="link-badge">Licensed under CC0 1.0</a>`;
+                    licenseLinkHtml = `<a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noopener noreferrer" class="link-badge">Licensed under CC0 1.0</a>`;
                 }
 
-                const finalPromptLicenseNotice = `©${authorName} (${licenseLinkHtml})`;
+                const finalPromptLicenseNotice = `©${escapeHtml(authorName)} (${licenseLinkHtml})`;
 
                 licenseBoxContent += `
                     <div class="license-sub-section" style="margin-top: 8px; border-top: 1px dashed var(--border-manual); padding-top: 6px;">
@@ -758,11 +789,13 @@
             const shareUrl = currentHost + window.location.pathname + '?app=' + app.id;
             
             panelHtml += `
-                <button class="share-url-btn" onclick="copyShareUrl('${shareUrl}', this)">📋 共有URLをコピー</button>
-                <button class="download-btn" onclick="downloadApp('${app.id}')">📥 ダウンロード</button>
+                <button class="share-url-btn">📋 共有URLをコピー</button>
+                <button class="download-btn">📥 ダウンロード</button>
             `;
 
             infoContent.innerHTML = panelHtml;
+            infoContent.querySelector('.share-url-btn').addEventListener('click', e => copyShareUrl(shareUrl, e.currentTarget));
+            infoContent.querySelector('.download-btn').addEventListener('click', () => downloadApp(app.id));
         }
 
         window.copyShareUrl = function(url, buttonElement) {
@@ -787,7 +820,12 @@
             if (!app) return;
 
             if (app.downloadUrl && app.downloadUrl.trim() !== "") {
-                window.open(app.downloadUrl, '_blank', 'noopener');
+                const url = safeUrl(app.downloadUrl);
+                if (!url) {
+                    alert('ダウンロードURLが不正です。');
+                    return;
+                }
+                window.open(url, '_blank', 'noopener');
                 return;
             }
 
