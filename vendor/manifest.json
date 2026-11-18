@@ -1,0 +1,75 @@
+{
+  "files": [
+    {
+      "id": "jszip@3.10.1/jszip.min.js",
+      "kind": "text",
+      "element": "script",
+      "integrity": "sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG",
+      "license": "(MIT OR GPL-3.0-or-later)",
+      "homepage": "https://github.com/Stuk/jszip",
+      "notice": "jszip@3.10.1/NOTICE.txt",
+      "urls": [
+        "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js",
+        "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"
+      ]
+    },
+    {
+      "id": "jspdf@2.5.1/jspdf.umd.min.js",
+      "kind": "text",
+      "element": "script",
+      "integrity": "sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk",
+      "license": "MIT",
+      "homepage": "https://github.com/parallax/jsPDF",
+      "notice": "jspdf@2.5.1/NOTICE.txt",
+      "urls": [
+        "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+      ]
+    },
+    {
+      "id": "driver.js@1.0.1/driver.js.iife.js",
+      "kind": "text",
+      "element": "script",
+      "integrity": "sha384-yPK823YWGKpXfBT8wLqUXmrB5ejcI7sgGBIary/01UavNc1bD92AOUBCBzjXQS/s",
+      "license": "MIT",
+      "homepage": "https://github.com/kamranahmedse/driver.js",
+      "notice": "driver.js@1.0.1/NOTICE.txt",
+      "urls": [
+        "https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.js.iife.js"
+      ]
+    },
+    {
+      "id": "driver.js@1.0.1/driver.css",
+      "kind": "text",
+      "element": "style",
+      "integrity": "sha384-bovbcpDBo0pTIhd7ws6ebPh1PG31ubAHcX2pv8Tcu5EtFHNl5FBciYFtS/e2SN66",
+      "license": "MIT",
+      "homepage": "https://github.com/kamranahmedse/driver.js",
+      "notice": null,
+      "urls": [
+        "https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.css"
+      ]
+    },
+    {
+      "id": "sql.js@1.8.0/sql-wasm.js",
+      "kind": "text",
+      "element": "script",
+      "integrity": "sha384-KsfptB549CXfbfsdxZmPo2PlmgCyJ+RNqHTQE1Gj45t3p4DaA1QbZYVyqlni4pOO",
+      "license": "MIT",
+      "homepage": "https://github.com/sql-js/sql.js",
+      "notice": "sql.js@1.8.0/NOTICE.txt",
+      "urls": [
+        "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"
+      ]
+    },
+    {
+      "id": "sql.js@1.8.0/sql-wasm.wasm",
+      "kind": "binary",
+      "element": "script",
+      "integrity": "sha384-AS2JK6pQgcjrHesLM8C6EQ0u87+/VcHqKXIPDFVCgQgO2A258+LHg7ID8d66NgPW",
+      "license": "MIT",
+      "homepage": "https://github.com/sql-js/sql.js",
+      "notice": null,
+      "urls": []
+    }
+  ]
+}
