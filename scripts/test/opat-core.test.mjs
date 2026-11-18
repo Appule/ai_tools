@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyCsp, checkFiles, checkHtml, checkMeta, CSP_CONTENT, inlineVendor, tokenizeHtml, TransformError,
-  unsafeVendorText } from '../lib/opat-core.mjs';
+import { applyCsp, checkFiles, checkHtml, checkMeta, CSP_CONTENT, finding, inlineVendor, tokenizeHtml,
+  TransformError, unsafeVendorText } from '../lib/opat-core.mjs';
 
 const policy = '<meta http-equiv="Content-Security-Policy" content="' + CSP_CONTENT + '">';
 const page = (content = '', before = '') => '<!doctype html><html><head>' + before + policy +
@@ -89,7 +89,7 @@ test('vendor conversion, payload comparison, notices, and idempotence', () => {
     ['vendor-notice-missing']);
   for (const attr of ['defer', 'async', 'type=module']) {
     assert.throws(() => inlineVendor(page('<script ' + attr + ' src="' + text.urls[0] + '"></script>'), options),
-      /Cannot inline/);
+      /change how it runs/);
   }
   assert.throws(() => inlineVendor(page(placeholder(binary).replace(' data-opat-encoding="base64"', '')), options),
     /attributes/);
@@ -179,4 +179,29 @@ for (const [library, marker] of [[text, '</script>'], [text, '<!--'], [style, '<
 
 test('rejects an unknown vendor element', () => {
   assert.throws(() => unsafeVendorText('link', 'x'), TypeError);
+});
+
+test('all finding messages use sentence punctuation and no backticks', () => {
+  const ruleIds = [
+    'not-utf8', 'charset-not-utf8', 'no-head', 'csp-missing', 'csp-duplicate', 'csp-mismatch',
+    'csp-position', 'external-script', 'external-link', 'forbidden-element', 'form-action',
+    'external-media', 'ping-attr', 'css-import', 'css-external-url', 'vendor-unknown',
+    'vendor-mismatch', 'vendor-notice-missing', 'bypass-webrtc', 'bypass-window-open',
+    'bypass-navigation', 'parent-access', 'folder-name', 'missing-index', 'missing-meta',
+    'subdir-not-allowed', 'file-not-allowed', 'size-error', 'size-warning', 'meta-invalid-json',
+    'meta-id-mismatch', 'meta-missing-field', 'meta-invalid-type', 'meta-invalid-url', 'meta-unknown-field',
+  ];
+  for (const id of ruleIds) {
+    const { ja, en } = finding(id).message;
+    assert.ok(ja.endsWith('。'), id);
+    assert.ok(en.endsWith('.'), id);
+    assert.ok(!ja.includes('`'), id);
+    assert.ok(!en.includes('`'), id);
+  }
+});
+
+test('external script message includes the URL after the Japanese advice', () => {
+  const { message } = finding('external-script', 1, 'https://example.com/a.js');
+  assert.equal(message.ja,
+    '外部のスクリプトを読み込んでいます。スクリプトはファイルの中に埋め込んでください。登録済みのライブラリなら、--inline-vendor で埋め込めます。 (https://example.com/a.js)');
 });
