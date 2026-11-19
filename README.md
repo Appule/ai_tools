@@ -13,6 +13,8 @@ index.html          ポータル本体 (アプリ一覧・Information パネル)
 apps/<app_id>/      各アプリ (index.html + meta.json)
 apps/apps-index.js  meta.json から自動生成されるインデックス (手動編集不可)
 scripts/build-index.js  インデックス生成スクリプト (node scripts/build-index.js)
+scripts/opat-check.mjs  アプリの検査、CSP の挿入、ライブラリの埋め込みを行うツール (node scripts/opat-check.mjs)
+vendor/             アプリに埋め込む第三者ライブラリの原本 (vendor/README.md)
 ```
 
 `apps/**/meta.json` を変更して `main` に push すると、GitHub Actions が `apps/apps-index.js` を再生成します。
@@ -21,6 +23,8 @@ scripts/build-index.js  インデックス生成スクリプト (node scripts/bu
 
 - **ポータル本体**（`index.html`、`scripts/`、ルート直下のファイル）は New BSD License (BSD 3-Clause) で公開しています。詳細は [LICENSE](./LICENSE) を参照してください。
 - **各アプリ**（`apps/<app_id>/`）のライセンスは各アプリで規定されます。特に明記がない場合、AI生成部分は著作権を主張せず、人間が手直しした部分は 0BSD、プロンプトは `meta.json` の `promptLicense` で著者が指定したライセンスが適用されます。
+- **`vendor/` 内の第三者ライブラリ**は、それぞれのライブラリのライセンスに従います。詳細は [vendor/README.md](./vendor/README.md) を参照してください。
 
 - The **portal itself** (`index.html`, `scripts/`, and other files at the repository root) is released under the New BSD License (BSD 3-Clause). See [LICENSE](./LICENSE).
 - The license of each **application** (`apps/<app_id>/`) is defined by that application. Unless stated otherwise, no copyright is claimed on AI-generated code, human-modified parts are under 0BSD, and prompts are licensed by their authors as given in `promptLicense` in `meta.json`.
+- The **third-party libraries under `vendor/`** remain under their respective licenses. See [vendor/README.md](./vendor/README.md).

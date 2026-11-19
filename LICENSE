@@ -16,6 +16,10 @@ License) applies to the OPAT portal itself, namely:
 It does NOT apply to the individual applications placed under
 apps/<app_id>/ (see section 3).
 
+It also does NOT apply to the third-party libraries stored under
+vendor/, which remain under their respective licenses (see
+vendor/README.md).
+
 ======================================================================
 2. License of the portal (New BSD License)
 ======================================================================
@@ -77,5 +81,5 @@ in the "Information" pane of the portal:
     code that relies on such software remains subject to the license of
     that software, which takes precedence over the terms above.
 
-Third-party libraries bundled in an application (for example, files
-under apps/<app_id>/assets/) remain under their respective licenses.
+Third-party libraries bundled in an application remain under their
+respective licenses.

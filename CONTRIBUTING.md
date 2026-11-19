@@ -21,7 +21,8 @@ To add a new web application, you must prepare a dedicated folder named after yo
 #### ① `index.html` (Application Body)
 
 * A single, standalone web application page.
-* All necessary CSS and JavaScript should ideally be embedded inline within this file or referenced cleanly via secure external CDNs.
+* Everything the app needs (CSS, JavaScript, images, fonts, and libraries) must be embedded in this one file. The app must not load anything from external servers or send anything to them, so external CDNs cannot be used. Ordinary links that users click to open another site are fine.
+* Every app carries a fixed Content-Security-Policy tag that makes the browser block external communication. You do not need to write it yourself. See "5. Automated Checks" below.
 * It must design to fit and run correctly inside an `<iframe>` container.
 
 #### ② `meta.json` (Metadata Configuration)
@@ -106,6 +107,24 @@ ai_tools/ (Repository Root)
 5. **Automatic Index Update**: Once your PR is approved and merged, a **GitHub Actions automation script** will trigger automatically. It scans your new folder, parses your `meta.json`, and seamlessly updates the platform's central dictionary (`apps-index.js`). Your app will be live instantly without any manual overhead!
 
 ---
+
+### 5. Automated Checks
+
+Every Pull Request is checked automatically. The check confirms that the app is a single self-contained file, that it does not load anything from external servers, and that it carries the required Content-Security-Policy tag.
+
+You can run the same check on your own PC (Node.js 20 or later is required):
+
+```bash
+node scripts/opat-check.mjs --inline-vendor --apply-csp apps/my_awesome_tool
+```
+
+* `--apply-csp` inserts the Content-Security-Policy tag into your HTML for you.
+* `--inline-vendor` replaces CDN tags for the libraries stored in the `vendor/` folder with embedded copies, together with their license notices. For other libraries, embed them in your HTML yourself (you can ask your AI to do it) and include their license notices.
+* Problems are reported as `error` (must be fixed) or `warning` (a maintainer will look at it).
+
+If you cannot run the command, submit the Pull Request anyway. A maintainer can run it for you.
+
+---
 <a name="japanese-日本語"></a>
 
 ## Japanese (日本語ガイド)
@@ -125,7 +144,8 @@ ai_tools/ (Repository Root)
 #### ① `index.html` (アプリケーション本体)
 
 * 1ページで完結するスタンドアロンなWebアプリケーション。
-* 必要なCSSやJavaScriptは、原則としてこのファイル内にインラインで記述するか、信頼できる外部CDNのパスを読み込ませるようにしてください。
+* アプリが必要とするもの（CSS、JavaScript、画像、フォント、ライブラリ）は、すべてこのファイルの中に埋め込んでください。外部のサーバーからの読み込みや、外部のサーバーへの送信はできません。そのため、外部CDNは使えません。利用者がクリックして別のサイトを開く通常のリンクは使えます。
+* すべてのアプリには、外部との通信をブラウザに止めさせるための決まったタグ（Content-Security-Policy）が入ります。ご自身で書く必要はありません。下の「5. 自動チェック」をご覧ください。
 * ポータルサイト中央の `<iframe>` 内で正しく表示・動作する設計にしてください。
 
 #### ② `meta.json` (メタデータ設定ファイル)
@@ -209,3 +229,21 @@ ai_tools/ (リポジトリルート)
 3. **プルリクエストの提出**: あなたのブランチをGitHubにプッシュし、元のリポジトリの `main` ブランチに向けてPull Request（PR）を作成します。
 4. **レビューとマージ**: コミュニティのメンテナーが、HTMLコードの安全性やUIのレスポンシブ対応状況などを確認（レビュー）し、問題がなければプロジェクトにマージします。
 5. **インデックスの自動更新**: PRがマージされると同時に、裏側で **GitHub Actions の自動化スクリプト** が自動的に起動します。スクリプトが新規追加されたフォルダ内の `meta.json` を読み込み、全体のインデックスファイルである `apps-index.js` を自動で更新・再構築してコミットします。これによりあなたのアプリがWebサイトへ反映され、利用可能になります。
+
+---
+
+### 5. 自動チェック
+
+プルリクエストは、すべて自動でチェックされます。チェックする内容は、アプリが1つのファイルで完結していること、外部のサーバーから何も読み込んでいないこと、決められた Content-Security-Policy のタグが入っていることです。
+
+同じチェックを、ご自身のPCでも実行できます（Node.js 20 以降が必要です）。
+
+```bash
+node scripts/opat-check.mjs --inline-vendor --apply-csp apps/my_awesome_tool
+```
+
+* `--apply-csp` を付けると、Content-Security-Policy のタグをHTMLに自動で挿入します。
+* `--inline-vendor` を付けると、`vendor/` フォルダにあるライブラリについて、CDNを読み込むタグを埋め込みに置き換え、ライセンス表記も一緒に入れます。それ以外のライブラリは、ご自身でHTMLに埋め込み（AIに頼めます）、ライセンス表記も入れてください。
+* 問題は `error`（修正が必要）か `warning`（メンテナーが確認します）として表示されます。
+
+コマンドを実行できない場合は、そのままプルリクエストを出してください。メンテナーが代わりに実行します。
