@@ -427,3 +427,57 @@ export function applyCsp(html) {
   const lineBreak = /^[\t ]*\r?\n/.test(after) ? '' : eol;
   return cleaned.slice(0, anchor.end) + eol + indent + CSP_TAG + lineBreak + after;
 }
+
+const libraryIdPattern = /^((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*)@((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))\/(.+)$/;
+const libraryPath = path => path.split('/').every(part =>
+  /^[A-Za-z0-9._~+-]+$/.test(part) && part !== '.' && part !== '..');
+const registryError = (item, message) => new Error('Invalid registry: ' + item + ': ' + message);
+
+export function parseLibraryId(id) {
+  const match = typeof id === 'string' && libraryIdPattern.exec(id);
+  if (!match || !libraryPath(match[3])) throw registryError(String(id), 'invalid library id');
+  return { name: match[1], version: match[2], path: match[3] };
+}
+
+export function parseRegistry(jsonText) {
+  let data;
+  try { data = JSON.parse(jsonText); }
+  catch { throw registryError('root', 'invalid JSON'); }
+  const exactKeys = (value, keys) => object(value) && Object.keys(value).length === keys.length &&
+    keys.every(key => Object.hasOwn(value, key));
+  if (!exactKeys(data, ['files']) || !Array.isArray(data.files)) {
+    throw registryError('root', 'expected only a files array');
+  }
+  const registry = new Map();
+  let previous;
+  for (const [index, entry] of data.files.entries()) {
+    const label = typeof entry?.id === 'string' ? entry.id : 'item ' + (index + 1);
+    const require = (condition, message) => { if (!condition) throw registryError(label, message); };
+    require(exactKeys(entry, ['id', 'type', 'integrity', 'license', 'urls']), 'expected exactly five fields');
+    let library;
+    try { library = parseLibraryId(entry.id); }
+    catch { throw registryError(label, 'invalid library id'); }
+    const { version, path } = library;
+    const extension = path.slice(path.lastIndexOf('.'));
+    require(Object.hasOwn({ '.js': 'script', '.css': 'style', '.wasm': 'wasm' }, extension) &&
+      entry.type === { '.js': 'script', '.css': 'style', '.wasm': 'wasm' }[extension], 'type and extension differ');
+    require(typeof entry.integrity === 'string' && /^sha384-[A-Za-z0-9+/]{64}$/.test(entry.integrity), 'invalid integrity');
+    require(typeof entry.license === 'string' && /^[\x21-\x7e](?:[\x20-\x7e]{0,98}[\x21-\x7e])?$/.test(entry.license), 'invalid license');
+    require(Array.isArray(entry.urls) && entry.urls.length > 0, 'expected nonempty urls');
+    let previousUrl;
+    for (const url of entry.urls) {
+      require(typeof url === 'string' && /^https:\/\/[A-Za-z0-9._~@\/+-]+$/.test(url), 'invalid URL');
+      require(!/\/\/|\/\.\/|\/\.\.\//.test(url.slice(8)) && !/\/(?:\.{1,2})?$/.test(url), 'invalid URL path');
+      const cdnjs = /^https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/[A-Za-z0-9._-]+\/((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))\/(.+)$/.exec(url);
+      require(url === 'https://cdn.jsdelivr.net/npm/' + entry.id ||
+        (cdnjs && cdnjs[1] === version && libraryPath(cdnjs[2]) && cdnjs[2].endsWith(extension)), 'URL does not match library');
+      require(previousUrl === undefined || previousUrl < url, 'urls must be sorted and unique');
+      require(!registry.has(url), 'URL occurs in multiple entries');
+      previousUrl = url;
+      registry.set(url, entry);
+    }
+    require(previous === undefined || previous < entry.id, 'files must be sorted and unique');
+    previous = entry.id;
+  }
+  return registry;
+}

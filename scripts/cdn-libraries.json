@@ -1,0 +1,59 @@
+{
+  "files": [
+    {
+      "id": "driver.js@1.0.1/dist/driver.css",
+      "type": "style",
+      "integrity": "sha384-bovbcpDBo0pTIhd7ws6ebPh1PG31ubAHcX2pv8Tcu5EtFHNl5FBciYFtS/e2SN66",
+      "license": "MIT",
+      "urls": [
+        "https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.css"
+      ]
+    },
+    {
+      "id": "driver.js@1.0.1/dist/driver.js.iife.js",
+      "type": "script",
+      "integrity": "sha384-yPK823YWGKpXfBT8wLqUXmrB5ejcI7sgGBIary/01UavNc1bD92AOUBCBzjXQS/s",
+      "license": "MIT",
+      "urls": [
+        "https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.js.iife.js"
+      ]
+    },
+    {
+      "id": "jspdf@2.5.1/dist/jspdf.umd.min.js",
+      "type": "script",
+      "integrity": "sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk",
+      "license": "MIT",
+      "urls": [
+        "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+      ]
+    },
+    {
+      "id": "jszip@3.10.1/dist/jszip.min.js",
+      "type": "script",
+      "integrity": "sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG",
+      "license": "(MIT OR GPL-3.0-or-later)",
+      "urls": [
+        "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+        "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+      ]
+    },
+    {
+      "id": "sql.js@1.8.0/dist/sql-wasm.js",
+      "type": "script",
+      "integrity": "sha384-KsfptB549CXfbfsdxZmPo2PlmgCyJ+RNqHTQE1Gj45t3p4DaA1QbZYVyqlni4pOO",
+      "license": "MIT",
+      "urls": [
+        "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"
+      ]
+    },
+    {
+      "id": "sql.js@1.8.0/dist/sql-wasm.wasm",
+      "type": "wasm",
+      "integrity": "sha384-AS2JK6pQgcjrHesLM8C6EQ0u87+/VcHqKXIPDFVCgQgO2A258+LHg7ID8d66NgPW",
+      "license": "MIT",
+      "urls": [
+        "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.wasm"
+      ]
+    }
+  ]
+}
