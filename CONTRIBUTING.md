@@ -126,7 +126,7 @@ If you cannot run the command, submit the Pull Request anyway. A maintainer can 
 #### Libraries
 
 * Only maintainers can add libraries to `scripts/cdn-libraries.json`. If your app needs a library that is not listed, ask for it in your Pull Request or in an Issue. A maintainer will register it in a separate Pull Request.
-* A library that is not registered can still be used if you embed it in your HTML yourself (you can ask your AI to do it). Include its license notice.
+* A library that is not registered can still be used by embedding its official file in your HTML as it is (your AI can do this for you). Include its license notice.
 
 ---
 <a name="japanese-日本語"></a>
@@ -254,4 +254,4 @@ node scripts/opat-check.mjs --apply-csp apps/my_awesome_tool
 #### ライブラリ
 
 * `scripts/cdn-libraries.json` にライブラリを登録できるのは、メンテナーだけです。登録されていないライブラリが必要な場合は、プルリクエストか Issue で依頼してください。メンテナーが、別のプルリクエストで登録します。
-* 登録されていないライブラリも、ご自身でHTMLに埋め込めば使えます（AIに頼めます）。その場合は、ライセンス表記も入れてください。
+* 登録されていないライブラリも、公式の配布ファイルの中身をそのままHTMLに埋め込めば使えます（AIに頼めます）。その場合は、ライセンス表記も入れてください。
