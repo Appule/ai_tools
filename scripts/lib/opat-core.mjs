@@ -1,5 +1,4 @@
 export const CSP_CONTENT = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; worker-src blob:; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data: blob:; connect-src data: blob:; form-action 'none'; base-uri 'none'";
-const CSP_TAG = '<meta http-equiv="Content-Security-Policy" content="' + CSP_CONTENT + '">';
 const SIZE_WARNING = 3 * 1024 * 1024;
 const SIZE_ERROR = 10 * 1024 * 1024;
 const blank = text => /^[\t\n\f\r ]*$/.test(text);
@@ -15,6 +14,14 @@ const declaresNonUtf8 = attrs =>
     !(attrs.content ?? '').replace(/[\t\n\f\r ]/g, '').toLowerCase().includes('charset=utf-8'));
 
 const messages = {
+  'cdn-connect-no-integrity': ["読み込む wasm の、登録されたハッシュが、ファイルのどこにもありません。fetch の integrity に、登録表の値を指定してください。",
+    "The registered hash of a declared wasm file does not appear in this file. Pass the registered value as the integrity option of fetch."],
+  'cdn-connect-unknown': ["opat-cdn-connect の <meta> に、登録された wasm の URL 以外が書かれています。scripts/cdn-libraries.json にある wasm の URL にするか、この <meta> を取り除いてください。",
+    "An opat-cdn-connect <meta> element names something other than a registered wasm URL. Use a wasm URL listed in scripts/cdn-libraries.json, or remove this <meta>."],
+  'cdn-crossorigin': ["ライブラリを読み込むタグに、crossorigin=\"anonymous\" がありません。--apply-csp で直せます。",
+    "This library tag does not have crossorigin=\"anonymous\". Run --apply-csp to fix it."],
+  'cdn-integrity': ["ライブラリを読み込むタグの integrity が、登録されたハッシュと一致しないか、ありません。--apply-csp で直せます。",
+    "The integrity attribute of this library tag is missing or differs from the registered hash. Run --apply-csp to fix it."],
   'not-utf8': ['ファイルを UTF-8 として読めません。UTF-8 で保存し直してください。',
     'The file cannot be read as UTF-8. Save it again as UTF-8.'],
   'charset-not-utf8': ['UTF-8 以外の文字コードを宣言しています。<meta charset="utf-8"> にしてください。',
@@ -25,14 +32,14 @@ const messages = {
     'The CSP tag is missing. Insert it with --apply-csp.'],
   'csp-duplicate': ['CSP のタグが2つ以上あります。--apply-csp で1つにしてください。',
     'There is more than one CSP tag. Run --apply-csp to keep only one.'],
-  'csp-mismatch': ['CSP の内容が、決められたものと違います。--apply-csp で置き換えてください。',
-    'The CSP differs from the required one. Replace it with --apply-csp.'],
+  'csp-mismatch': ["CSP の内容が、このファイルに合わせて検査ツールが作る値と違います。--apply-csp で置き換えてください。",
+    "The CSP differs from the value the checker builds for this file. Replace it with --apply-csp."],
   'csp-position': ['CSP のタグより前に、ほかのタグや文字があります。CSP のタグを <head> の先頭（<meta charset> の直後）に置いてください。--apply-csp で移せます。',
     'Other tags or text come before the CSP tag. Place the CSP tag at the start of <head>, right after <meta charset>. --apply-csp can move it there.'],
-  'external-script': ['外部のスクリプトを読み込んでいます。スクリプトはファイルの中に埋め込んでください。',
-    'The page loads an external script. Embed the script in the HTML file.'],
-  'external-link': ['<link> で、ファイルの外のものを読み込もうとしています。中身をファイルの中に埋め込むか、この <link> を取り除いてください。',
-    'A <link> element loads something from outside the file. Embed the content in the HTML file, or remove this <link>.'],
+  'external-script': ["外部のスクリプトを読み込んでいます。スクリプトはファイルの中に埋め込んでください。登録済みのライブラリなら、登録された URL のまま読み込めます（一覧は scripts/cdn-libraries.json）。",
+    "The page loads an external script. Embed the script in the HTML file. A registered library can be loaded from its registered URL (see scripts/cdn-libraries.json)."],
+  'external-link': ["<link> で、ファイルの外のものを読み込もうとしています。中身をファイルの中に埋め込むか、この <link> を取り除いてください。登録済みのライブラリの CSS なら、rel=\"stylesheet\" で、登録された URL のまま読み込めます（一覧は scripts/cdn-libraries.json）。",
+    "A <link> element loads something from outside the file. Embed the content in the HTML file, or remove this <link>. A registered library stylesheet can be loaded with rel=\"stylesheet\" from its registered URL (see scripts/cdn-libraries.json)."],
   'forbidden-element': ['この要素は、ページの外のものを読み込んだり、ページを移動させたりするのに使えるため、許可していません。取り除いてください。',
     'This element is not allowed because it can load content from outside the page or move to another page. Remove it.'],
   'form-action': ['フォームに送信先（action 属性）が指定されています。ページの外へデータを送ることはできないため、action 属性を取り除いてください。',
@@ -81,7 +88,7 @@ const messages = {
     'meta.json has a field that is not defined. Check it for typos, or remove it.'],
 };
 const warnings = new Set(['bypass-window-open', 'bypass-navigation', 'parent-access',
-  'size-warning', 'meta-unknown-field']);
+  'size-warning', 'meta-unknown-field', 'cdn-connect-no-integrity']);
 
 export function finding(ruleId, line = 1, detail = '') {
   const [ja, en] = messages[ruleId];
@@ -147,6 +154,8 @@ export function tokenizeHtml(html) {
     }
     const name = tag[1].toLowerCase();
     const attrs = Object.create(null);
+    const attrSpans = Object.create(null);
+    const attrNames = [];
     let cursor = tagName.lastIndex;
     while (cursor < html.length && html[cursor] !== '>') {
       spaces.lastIndex = cursor;
@@ -160,6 +169,8 @@ export function tokenizeHtml(html) {
         continue;
       }
       attrs[attr[1].toLowerCase()] ??= attr[2] ?? attr[3] ?? attr[4] ?? '';
+      attrSpans[attr[1].toLowerCase()] ??= { start: cursor, end: attribute.lastIndex };
+      attrNames.push(attr[1].toLowerCase());
       cursor = attribute.lastIndex;
     }
     const openEnd = Math.min(cursor + 1, html.length);
@@ -167,7 +178,7 @@ export function tokenizeHtml(html) {
       emit('end', openEnd, { name });
       continue;
     }
-    const properties = { name, attrs, openEnd };
+    const properties = { name, attrs, openEnd, attrSpans, attrNames };
     let end = openEnd;
     if (rawTags.has(name)) {
       const close = new RegExp('</' + name + '(?=[\\t\\n\\f\\r />])[^>]*>', 'gi');
@@ -185,6 +196,43 @@ export function tokenizeHtml(html) {
 const resourceRels = new Set(['stylesheet', 'preload', 'modulepreload', 'prefetch',
   'prerender', 'dns-prefetch', 'preconnect', 'manifest', 'icon', 'apple-touch-icon']);
 const rels = attrs => (attrs.rel ?? '').toLowerCase().split(/[\t\n\f\r ]+/);
+const registeredCss = (token, registry) => token.name === 'link' &&
+  rels(token.attrs).filter(Boolean).join(' ') === 'stylesheet' &&
+  registry.get(token.attrs.href)?.type === 'style';
+const registeredTagUrl = (token, registry) => {
+  if (token.name === 'script' && registry.get(token.attrs.src)?.type === 'script') return token.attrs.src;
+  if (registeredCss(token, registry)) return token.attrs.href;
+};
+const sortedUnique = values => [...new Set(values)].sort();
+
+export function buildCsp({ script = [], style = [], connect = [] } = {}) {
+  const additions = { 'script-src': script, 'style-src': style, 'connect-src': connect };
+  for (const values of Object.values(additions)) {
+    for (const value of values) {
+      if (typeof value !== 'string' || !/^https:\/\/[A-Za-z0-9._~@\/+-]+$/.test(value)) {
+        throw new TypeError('Invalid CSP URL');
+      }
+    }
+  }
+  return CSP_CONTENT.split('; ').map(directive => {
+    const values = sortedUnique(additions[directive.split(' ')[0]] ?? []);
+    return directive + (values.length ? ' ' + values.join(' ') : '');
+  }).join('; ');
+}
+
+export function collectCdnUrls(html, { registry = new Map() } = {}) {
+  const urls = { script: [], style: [], connect: [] };
+  for (const token of tokenizeHtml(html)) {
+    if (token.type !== 'start') continue;
+    const { name, attrs } = token;
+    if (name === 'script' && registry.get(attrs.src)?.type === 'script') urls.script.push(attrs.src);
+    if (registeredCss(token, registry)) urls.style.push(attrs.href);
+    if (name === 'meta' && attrs.name === 'opat-cdn-connect' &&
+        registry.get(attrs.content)?.type === 'wasm') urls.connect.push(attrs.content);
+  }
+  return Object.fromEntries(Object.entries(urls).map(([type, values]) => [type, sortedUnique(values)]));
+}
+
 const media = new Set(['img', 'audio', 'video', 'source', 'track', 'input']);
 const forbidden = new Set(['base', 'iframe', 'frame', 'object', 'embed']);
 const isPageData = value => /^(?:$|data:|blob:|#)/i.test(value.trim());
@@ -227,7 +275,7 @@ function cspPosition(tokens, index) {
   return head;
 }
 
-export function checkHtml(input) {
+export function checkHtml(input, { registry = new Map() } = {}) {
   let html;
   try {
     html = typeof input === 'string' ? input : decodeUtf8(input);
@@ -238,11 +286,13 @@ export function checkHtml(input) {
   const findings = [];
   const add = (rule, token, detail) => findings.push(finding(rule, token?.line, detail));
   if (!tokens.some(t => t.type === 'start' && t.name === 'head')) add('no-head');
+  const cdnUrls = collectCdnUrls(html, { registry });
+  const expectedCsp = buildCsp(cdnUrls);
   const policies = tokens.filter(csp);
   if (!policies.length) add('csp-missing');
   if (policies.length > 1) add('csp-duplicate', policies[1]);
   for (const policy of policies) {
-    if (policy.attrs.content !== CSP_CONTENT) add('csp-mismatch', policy);
+    if (policy.attrs.content !== expectedCsp) add('csp-mismatch', policy);
   }
   if (policies.length && !cspPosition(tokens, tokens.indexOf(policies[0]))) add('csp-position', policies[0]);
 
@@ -250,8 +300,18 @@ export function checkHtml(input) {
     if (token.type !== 'start') continue;
     const { attrs, name, body } = token;
     if (name === 'meta' && declaresNonUtf8(attrs)) add('charset-not-utf8', token);
-    if (name === 'script' && 'src' in attrs) add('external-script', token, attrs.src);
-    if (name === 'link' && 'href' in attrs && rels(attrs).some(rel =>
+    const url = registeredTagUrl(token, registry);
+    if (url !== undefined) {
+      if (attrs.integrity !== registry.get(url).integrity) add('cdn-integrity', token, url);
+      if (attrs.crossorigin !== 'anonymous') add('cdn-crossorigin', token, url);
+    }
+    if (name === 'script') {
+      if ('src' in attrs && registry.get(attrs.src)?.type !== 'script') add('external-script', token, attrs.src);
+      if ('href' in attrs || 'xlink:href' in attrs) add('external-script', token, attrs.href ?? attrs['xlink:href']);
+    }
+    if (name === 'meta' && attrs.name === 'opat-cdn-connect' &&
+        registry.get(attrs.content)?.type !== 'wasm') add('cdn-connect-unknown', token, attrs.content);
+    if (name === 'link' && !registeredCss(token, registry) && 'href' in attrs && rels(attrs).some(rel =>
       rel === 'dns-prefetch' || rel === 'preconnect' ||
       (resourceRels.has(rel) && !/^data:/i.test(attrs.href.trim())))) add('external-link', token, attrs.href);
     if (forbidden.has(name) || (name === 'meta' && attrs['http-equiv']?.toLowerCase() === 'refresh')) {
@@ -281,6 +341,13 @@ export function checkHtml(input) {
     }
     for (const [rule, pattern] of scriptRules) {
       if (code.some(source => pattern.test(source))) add(rule, token);
+    }
+  }
+  for (const url of cdnUrls.connect) {
+    if (!html.includes(registry.get(url).integrity)) {
+      const declaration = tokens.find(t => t.type === 'start' && t.name === 'meta' &&
+        t.attrs.name === 'opat-cdn-connect' && t.attrs.content === url);
+      add('cdn-connect-no-integrity', declaration, url);
     }
   }
   return findings;
@@ -408,12 +475,48 @@ export class TransformError extends Error {
   }
 }
 
-export function applyCsp(html) {
+export function applyCsp(html, { registry = new Map() } = {}) {
+  const changes = [];
+  for (const token of tokenizeHtml(html)) {
+    if (token.type !== 'start') continue;
+    const url = registeredTagUrl(token, registry);
+    if (url === undefined) continue;
+    if (['src', 'href', 'integrity', 'crossorigin'].some(name =>
+      token.attrNames.filter(attr => attr === name).length > 1)) {
+      throw new TransformError('cdn-integrity', token.line,
+        'ライブラリを読み込むタグに、同じ名前の属性が2つ以上あるため、integrity と crossorigin を直せません。重複した属性を1つにしてください。',
+        'This library tag has the same attribute more than once, so integrity and crossorigin cannot be fixed. Keep only one of each attribute.');
+    }
+    let added = '';
+    for (const [name, value] of [['integrity', registry.get(url).integrity], ['crossorigin', 'anonymous']]) {
+      if (token.attrs[name] === value) continue;
+      const attribute = name + '="' + value + '"';
+      if (token.attrSpans[name]) changes.push({ ...token.attrSpans[name], value: attribute });
+      else added += ' ' + attribute;
+    }
+    if (added) {
+      let end = Math.max(...Object.values(token.attrSpans).map(span => span.end));
+      // The stored spans keep first occurrences; scan the tail for later duplicates.
+      if (token.attrNames.length > Object.keys(token.attrSpans).length) {
+        let tail;
+        while ((tail = tokenizeHtml('<x ' + html.slice(end, token.openEnd))[0]).attrNames.length) {
+          end += Math.max(...Object.values(tail.attrSpans).map(span => span.end)) - 3;
+        }
+      }
+      changes.push({ start: end, end, value: added });
+    }
+  }
+  html = replaceSpans(html, changes.sort((a, b) => a.start - b.start || a.end - b.end));
+  const urls = collectCdnUrls(html, { registry });
+  const declarations = [...registry].filter(([url, entry]) => entry.type === 'wasm' &&
+    html.includes(url) && !urls.connect.includes(url)).map(([url]) => url).sort();
+  const content = buildCsp({ ...urls, connect: [...urls.connect, ...declarations] });
+  const policyTag = '<meta http-equiv="Content-Security-Policy" content="' + content + '">';
   const tokens = tokenizeHtml(html);
   const head = tokens.findIndex(t => t.type === 'start' && t.name === 'head');
   if (head < 0) throw new TransformError('no-head', 1, ...messages['no-head']);
   const policies = tokens.filter(csp);
-  if (policies.length === 1 && policies[0].attrs.content === CSP_CONTENT &&
+  if (!declarations.length && policies.length === 1 && policies[0].attrs.content === content &&
       cspPosition(tokens, tokens.indexOf(policies[0]))) return html;
   const cleaned = replaceSpans(html, policies.map(t => removeTagLine(html, t)));
   const remaining = tokenizeHtml(cleaned);
@@ -425,7 +528,16 @@ export function applyCsp(html) {
   const indent = after.match(/^[\t ]*\r?\n([\t ]*)(?=\S)/)?.[1] ??
     cleaned.slice(cleaned.lastIndexOf('\n', anchor.start - 1) + 1, anchor.start).match(/^[\t ]*/)[0];
   const lineBreak = /^[\t ]*\r?\n/.test(after) ? '' : eol;
-  return cleaned.slice(0, anchor.end) + eol + indent + CSP_TAG + lineBreak + after;
+  html = cleaned.slice(0, anchor.end) + eol + indent + policyTag + lineBreak + after;
+  if (declarations.length) {
+    const policy = tokenizeHtml(html).find(csp);
+    const prefix = html.slice(html.lastIndexOf('\n', policy.start - 1) + 1, policy.start);
+    const declarationIndent = /^[\t ]*$/.test(prefix) ? prefix : '';
+    const tags = declarations.map(url => eol + declarationIndent +
+      '<meta name="opat-cdn-connect" content="' + url + '">').join('');
+    html = html.slice(0, policy.end) + tags + html.slice(policy.end);
+  }
+  return html;
 }
 
 const libraryIdPattern = /^((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*)@((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))\/(.+)$/;

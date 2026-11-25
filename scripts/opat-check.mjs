@@ -1,7 +1,7 @@
 import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyCsp, checkFiles, checkHtml, checkMeta, decodeUtf8, finding, TransformError } from './lib/opat-core.mjs';
+import { applyCsp, checkFiles, checkHtml, checkMeta, decodeUtf8, finding, parseRegistry, TransformError } from './lib/opat-core.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apps = join(root, 'apps');
@@ -11,7 +11,7 @@ const escapeData = value => value.replaceAll('%', '%25').replaceAll('\r', '%0D')
 const escapeProperty = value => escapeData(value).replaceAll(':', '%3A').replaceAll(',', '%2C');
 const summary = (errors, warnings) => errors + ' error(s), ' + warnings + ' warning(s)';
 
-async function checkApp(folder, flags, rewritten) {
+async function checkApp(folder, flags, rewritten, registry) {
   let errors = 0;
   let warnings = 0;
   function report(path, result) {
@@ -54,7 +54,7 @@ async function checkApp(folder, flags, rewritten) {
     }
     let html = original;
     try {
-      if (flags.has('--apply-csp')) html = applyCsp(html);
+      if (flags.has('--apply-csp')) html = applyCsp(html, { registry });
       if (html !== original) {
         await writeFile(path, html, 'utf8');
         rewritten.push(displayPath(path));
@@ -64,13 +64,14 @@ async function checkApp(folder, flags, rewritten) {
       report(path, error.finding);
       html = original;
     }
-    for (const result of checkHtml(html)) report(path, result);
+    for (const result of checkHtml(html, { registry })) report(path, result);
   }
   console.log(displayPath(folder) + ': ' + summary(errors, warnings));
   return { errors, warnings };
 }
 
 async function main() {
+  const registry = parseRegistry(await readFile(join(root, 'scripts/cdn-libraries.json'), 'utf8'));
   const flags = new Set();
   const folders = [];
   const available = new Set((await readdir(apps, { withFileTypes: true }))
@@ -89,7 +90,7 @@ async function main() {
   let errors = 0;
   let warnings = 0;
   for (const name of new Set(folders.length ? folders : [...available].sort())) {
-    const counts = await checkApp(join(apps, name), flags, rewritten);
+    const counts = await checkApp(join(apps, name), flags, rewritten, registry);
     errors += counts.errors;
     warnings += counts.warnings;
   }
