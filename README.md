@@ -13,6 +13,8 @@ index.html          ポータル本体 (アプリ一覧・Information パネル)
 apps/<app_id>/      各アプリ (index.html + meta.json)
 apps/apps-index.js  meta.json から自動生成されるインデックス (手動編集不可)
 scripts/build-index.js  インデックス生成スクリプト (node scripts/build-index.js)
+scripts/opat-check.mjs  アプリの検査と CSP の挿入を行うツール (node scripts/opat-check.mjs)
+scripts/cdn-libraries.json  アプリが CDN から読み込めるライブラリの登録表
 ```
 
 `apps/**/meta.json` を変更して `main` に push すると、GitHub Actions が `apps/apps-index.js` を再生成します。

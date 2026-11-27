@@ -21,7 +21,8 @@ To add a new web application, you must prepare a dedicated folder named after yo
 #### ① `index.html` (Application Body)
 
 * A single, standalone web application page.
-* All necessary CSS and JavaScript should ideally be embedded inline within this file or referenced cleanly via secure external CDNs.
+* Everything the app needs (CSS, JavaScript, images, and fonts) must be embedded in this one file. The only exception is the libraries listed in `scripts/cdn-libraries.json`, which may be loaded from their registered CDN URLs. The app must not load anything else from external servers, and must not send anything to external servers. Ordinary links that users click to open another site are fine.
+* Every app carries a Content-Security-Policy tag that limits which servers the browser may contact. You do not need to write it yourself. See "5. Automated Checks" below. The tag cannot stop every way of sending data, so the rule above must still be followed.
 * It must design to fit and run correctly inside an `<iframe>` container.
 
 #### ② `meta.json` (Metadata Configuration)
@@ -106,6 +107,28 @@ ai_tools/ (Repository Root)
 5. **Automatic Index Update**: Once your PR is approved and merged, a **GitHub Actions automation script** will trigger automatically. It scans your new folder, parses your `meta.json`, and seamlessly updates the platform's central dictionary (`apps-index.js`). Your app will be live instantly without any manual overhead!
 
 ---
+
+### 5. Automated Checks
+
+Every Pull Request is checked automatically. The check confirms that the app is a single self-contained file, that it loads nothing from external servers except registered libraries, and that it carries the required Content-Security-Policy tag.
+
+You can run the same check on your own PC (Node.js 20 or later is required):
+
+```bash
+node scripts/opat-check.mjs --apply-csp apps/my_awesome_tool
+```
+
+* `--apply-csp` inserts the Content-Security-Policy tag into your HTML. It also adds the `integrity` and `crossorigin` attributes to tags that load registered libraries, so you can write an ordinary CDN tag such as `<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>`.
+* Problems are reported as `error` (must be fixed) or `warning` (a maintainer will look at it).
+
+If you cannot run the command, submit the Pull Request anyway. A maintainer can run it for you.
+
+#### Libraries
+
+* Only maintainers can add libraries to `scripts/cdn-libraries.json`. If your app needs a library that is not listed, ask for it in your Pull Request or in an Issue. A maintainer will register it in a separate Pull Request.
+* A library that is not registered can still be used by embedding its official file in your HTML as it is (your AI can do this for you). Include its license notice.
+
+---
 <a name="japanese-日本語"></a>
 
 ## Japanese (日本語ガイド)
@@ -125,7 +148,8 @@ ai_tools/ (Repository Root)
 #### ① `index.html` (アプリケーション本体)
 
 * 1ページで完結するスタンドアロンなWebアプリケーション。
-* 必要なCSSやJavaScriptは、原則としてこのファイル内にインラインで記述するか、信頼できる外部CDNのパスを読み込ませるようにしてください。
+* アプリが必要とするもの（CSS、JavaScript、画像、フォント）は、すべてこのファイルの中に埋め込んでください。例外は `scripts/cdn-libraries.json` に登録されたライブラリで、登録された CDN の URL から読み込めます。それ以外のものを外部のサーバーから読み込むことと、外部のサーバーへ何かを送ることはできません。利用者がクリックして別のサイトを開く通常のリンクは使えます。
+* すべてのアプリには、ブラウザが通信できる相手を制限するタグ（Content-Security-Policy）が入ります。ご自身で書く必要はありません。下の「5. 自動チェック」をご覧ください。このタグですべての送信を防げるわけではないため、上のルールは必ず守ってください。
 * ポータルサイト中央の `<iframe>` 内で正しく表示・動作する設計にしてください。
 
 #### ② `meta.json` (メタデータ設定ファイル)
@@ -209,3 +233,25 @@ ai_tools/ (リポジトリルート)
 3. **プルリクエストの提出**: あなたのブランチをGitHubにプッシュし、元のリポジトリの `main` ブランチに向けてPull Request（PR）を作成します。
 4. **レビューとマージ**: コミュニティのメンテナーが、HTMLコードの安全性やUIのレスポンシブ対応状況などを確認（レビュー）し、問題がなければプロジェクトにマージします。
 5. **インデックスの自動更新**: PRがマージされると同時に、裏側で **GitHub Actions の自動化スクリプト** が自動的に起動します。スクリプトが新規追加されたフォルダ内の `meta.json` を読み込み、全体のインデックスファイルである `apps-index.js` を自動で更新・再構築してコミットします。これによりあなたのアプリがWebサイトへ反映され、利用可能になります。
+
+---
+
+### 5. 自動チェック
+
+プルリクエストは、すべて自動でチェックされます。チェックする内容は、アプリが1つのファイルで完結していること、登録されたライブラリ以外を外部のサーバーから読み込んでいないこと、決められた Content-Security-Policy のタグが入っていることです。
+
+同じチェックを、ご自身のPCでも実行できます（Node.js 20 以降が必要です）。
+
+```bash
+node scripts/opat-check.mjs --apply-csp apps/my_awesome_tool
+```
+
+* `--apply-csp` を付けると、Content-Security-Policy のタグをHTMLに自動で挿入します。登録されたライブラリを読み込むタグには、`integrity` と `crossorigin` の属性も自動で付けます。そのため、`<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>` のような普通の CDN のタグを書くだけで構いません。
+* 問題は `error`（修正が必要）か `warning`（メンテナーが確認します）として表示されます。
+
+コマンドを実行できない場合は、そのままプルリクエストを出してください。メンテナーが代わりに実行します。
+
+#### ライブラリ
+
+* `scripts/cdn-libraries.json` にライブラリを登録できるのは、メンテナーだけです。登録されていないライブラリが必要な場合は、プルリクエストか Issue で依頼してください。メンテナーが、別のプルリクエストで登録します。
+* 登録されていないライブラリも、公式の配布ファイルの中身をそのままHTMLに埋め込めば使えます（AIに頼めます）。その場合は、ライセンス表記も入れてください。

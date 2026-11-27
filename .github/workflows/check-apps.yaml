@@ -1,0 +1,38 @@
+name: Check Apps
+
+on:
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'scripts/**'
+      - '.github/workflows/check-apps.yaml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/**'
+      - 'scripts/**'
+      - '.github/workflows/check-apps.yaml'
+
+# 読み取り権限だけで動かす（PR のコードを実行するため）
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Run tests
+      run: node --test scripts/test/opat-core.test.mjs scripts/test/registry.test.mjs
+
+    - name: Check apps
+      run: node scripts/opat-check.mjs

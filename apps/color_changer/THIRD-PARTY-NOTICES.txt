@@ -1,7 +1,7 @@
 THIRD-PARTY NOTICES - color_changer (色替えツール)
 
 This application bundles the following third-party software in
-assets/index-*.js. The notices below are provided as required by the
+index.html. The notices below are provided as required by the
 licenses of that software.
 
 ----------------------------------------------------------------------
